@@ -197,7 +197,7 @@ def bot(message, history, oai_key, system_prompt, seed, temperature, max_tokens,
 
             history_openai_format = []
             user_msg_parts = []
-            if system_prompt:
+            if system_prompt and not (model == "o1-mini" or model == "o1-preview"):
                     history_openai_format.append({"role": "system", "content": system_prompt})
             for human, assi in history:
                 if human is not None:
@@ -224,30 +224,42 @@ def bot(message, history, oai_key, system_prompt, seed, temperature, max_tokens,
             if log_to_console:
                 print(f"br_prompt: {str(history_openai_format)}")
 
-            response = client.chat.completions.create(
-                model=model,
-                messages= history_openai_format,
-                temperature=temperature,
-                seed=seed_i,
-                max_tokens=max_tokens,
-                stream=True,
-                stream_options={"include_usage": True}
-            )
+            if model == "o1-preview" or model == "o1-mini":
+                response = client.chat.completions.create(
+                    model=model,
+                    messages= history_openai_format,
+                    seed=seed_i,
+                )
 
-            partial_response=""
-            for chunk in response:
-                if chunk.choices:
-                    txt = ""
-                    for choice in chunk.choices:
-                        cont = choice.delta.content
-                        if cont:
-                            txt += cont
+                yield response.choices[0].message.content
 
-                    partial_response += txt
-                    yield partial_response
+                if log_to_console:
+                        print(f"usage: {response.usage}")
+            else:
+                response = client.chat.completions.create(
+                    model=model,
+                    messages= history_openai_format,
+                    temperature=temperature,
+                    seed=seed_i,
+                    max_tokens=max_tokens,
+                    stream=True,
+                    stream_options={"include_usage": True}
+                )
 
-                if chunk.usage and log_to_console:
-                    print(f"usage: {chunk.usage}")
+                partial_response=""
+                for chunk in response:
+                    if chunk.choices:
+                        txt = ""
+                        for choice in chunk.choices:
+                            cont = choice.delta.content
+                            if cont:
+                                txt += cont
+
+                        partial_response += txt
+                        yield partial_response
+
+                    if chunk.usage and log_to_console:
+                        print(f"usage: {chunk.usage}")
 
         if log_to_console:
             print(f"br_result: {str(history)}")
