@@ -197,8 +197,14 @@ def bot(message, history, oai_key, system_prompt, seed, temperature, max_tokens,
 
             history_openai_format = []
             user_msg_parts = []
-            if system_prompt and not (model == "o1-mini" or model == "o1-preview"):
-                    history_openai_format.append({"role": "system", "content": system_prompt})
+
+            if system_prompt:
+                if not (model == "o1-mini" or model == "o1-preview"):
+                    role = "system"
+                else:
+                    role = "user"
+                history_openai_format.append({"role": role, "content": system_prompt})
+
             for human, assi in history:
                 if human is not None:
                     if type(human) is tuple:
