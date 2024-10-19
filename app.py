@@ -161,8 +161,8 @@ def bot(message, history, oai_key, system_prompt, seed, temperature, max_tokens,
                 if assi is not None:
                         whisper_prompt += f"\n{assi}"
 
-            if message.text:
-                whisper_prompt += message.text
+            if message["text"]:
+                whisper_prompt += message["text"]
             if message.files:
                 for file in message.files:
                     audio_fn = os.path.basename(file.path)
@@ -181,7 +181,7 @@ def bot(message, history, oai_key, system_prompt, seed, temperature, max_tokens,
         elif model == "dall-e-3":
             response = client.images.generate(
                 model=model,
-                prompt=message.text,
+                prompt=message["text"],
                 size="1792x1024",
                 quality="hd",
                 n=1,
@@ -219,11 +219,11 @@ def bot(message, history, oai_key, system_prompt, seed, temperature, max_tokens,
 
                     history_openai_format.append({"role": "assistant", "content": assi})
 
-            if message.text:
-                user_msg_parts.append({"type": "text", "text": message.text})
-            if message.files:
-                for file in message.files:
-                    user_msg_parts.extend(encode_file(file.path))
+            if message["text"]:
+                user_msg_parts.append({"type": "text", "text": message["text"]})
+            if message["files"]:
+                for file in message["files"]:
+                    user_msg_parts.extend(encode_file(file))
             history_openai_format.append({"role": "user", "content": user_msg_parts})
             user_msg_parts = []
 
@@ -350,11 +350,11 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
         dl_settings_button.click(None, controls, js=generate_download_settings_js("oai_chat_settings.bin", control_ids))
         ul_settings_button.click(None, None, None, js=generate_upload_settings_js(control_ids))
 
-    chat = gr.ChatInterface(fn=bot, multimodal=True, additional_inputs=controls, retry_btn = None, autofocus = False)
+    chat = gr.ChatInterface(fn=bot, multimodal=True, additional_inputs=controls, autofocus = False)
     chat.textbox.file_count = "multiple"
     chatbot = chat.chatbot
     chatbot.show_copy_button = True
-    chatbot.height = 350
+    chatbot.height = 450
 
     if dump_controls:
         with gr.Row():
