@@ -199,7 +199,7 @@ def bot(message, history, oai_key, system_prompt, seed, temperature, max_tokens,
             user_msg_parts = []
 
             if system_prompt:
-                if not (model == "o1-mini" or model == "o1-preview"):
+                if not model.startswith("o1"):
                     role = "system"
                 else:
                     role = "user"
@@ -230,7 +230,7 @@ def bot(message, history, oai_key, system_prompt, seed, temperature, max_tokens,
             if log_to_console:
                 print(f"br_prompt: {str(history_openai_format)}")
 
-            if model == "o1-preview" or model == "o1-mini":
+            if model.startswith("o1"):
                 response = client.chat.completions.create(
                     model=model,
                     messages= history_openai_format,
@@ -306,7 +306,7 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
 
         oai_key = gr.Textbox(label="OpenAI API Key", elem_id="oai_key")
         model = gr.Dropdown(label="Model", value="gpt-4-turbo", allow_custom_value=True, elem_id="model",
-                            choices=["gpt-4-turbo", "gpt-4o-2024-05-13", "gpt-4o-2024-11-20", "o1-mini", "o1-preview", "chatgpt-4o-latest", "gpt-4o", "gpt-4o-mini", "gpt-4-turbo-preview", "gpt-4-1106-preview", "gpt-4", "gpt-4-vision-preview", "gpt-3.5-turbo", "gpt-3.5-turbo-16k", "gpt-3.5-turbo-1106", "whisper", "dall-e-3"])
+                            choices=["gpt-4-turbo", "gpt-4o-2024-05-13", "gpt-4o-2024-11-20", "o1-mini", "o1", "chatgpt-4o-latest", "gpt-4o", "gpt-4o-mini", "gpt-4-turbo-preview", "gpt-4-1106-preview", "gpt-4", "gpt-4-vision-preview", "gpt-3.5-turbo", "gpt-3.5-turbo-16k", "gpt-3.5-turbo-1106", "whisper", "dall-e-3"])
         system_prompt = gr.TextArea("You are a helpful yet diligent AI assistant. Answer faithfully and factually correct. Respond with 'I do not know' if uncertain.", label="System Prompt", lines=3, max_lines=250, elem_id="system_prompt")  
         seed = gr.Textbox(label="Seed", elem_id="seed")
         temp = gr.Slider(0, 2, label="Temperature", elem_id="temp", value=1)
