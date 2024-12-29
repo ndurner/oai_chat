@@ -9,6 +9,7 @@ import io
 from settings_mgr import generate_download_settings_js, generate_upload_settings_js
 
 from doc2json import process_docx
+from code_exec import eval_restricted_script
 
 dump_controls = False
 log_to_console = False
@@ -143,7 +144,7 @@ def process_values_js():
     }
     """
 
-def bot(message, history, oai_key, system_prompt, seed, temperature, max_tokens, model):
+def bot(message, history, oai_key, system_prompt, seed, temperature, max_tokens, model, python_use):
     try:
         client = OpenAI(
             api_key=oai_key
@@ -191,6 +192,31 @@ def bot(message, history, oai_key, system_prompt, seed, temperature, max_tokens,
             seed_i = None
             if seed:
                 seed_i = int(seed)
+
+            tools = None if not python_use else [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "eval_python",
+                        "description": "Evaluate a simple script written in a conservative, restricted subset of Python."
+                                    "Note: Augmented assignments, in-place operations (e.g., +=, -=), lambdas (e.g. list comprehensions) are not supported. "
+                                    "Use regular assignments and operations instead. Only 'import math' is allowed. "
+                                    "Returns: unquoted results without HTML encoding.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "python_source_code": {
+                                    "type": "string",
+                                    "description": "The Python script that will run in a RestrictedPython context. "
+                                                "Avoid using augmented assignments or in-place operations (+=, -=, etc.), as well as lambdas (e.g. list comprehensions). "
+                                                "Use regular assignments and operations instead. Only 'import math' is allowed. Results need to be reported through print()."
+                                }
+                            },
+                            "required": ["python_source_code"]
+                        }
+                    }
+                }
+            ]
 
             if log_to_console:
                 print(f"bot history: {str(history)}")
@@ -242,30 +268,107 @@ def bot(message, history, oai_key, system_prompt, seed, temperature, max_tokens,
                 if log_to_console:
                         print(f"usage: {response.usage}")
             else:
-                response = client.chat.completions.create(
-                    model=model,
-                    messages= history_openai_format,
-                    temperature=temperature,
-                    seed=seed_i,
-                    max_tokens=max_tokens,
-                    stream=True,
-                    stream_options={"include_usage": True}
-                )
+                whole_response = ""
+                while True:
+                    response = client.chat.completions.create(
+                        model=model,
+                        messages= history_openai_format,
+                        temperature=temperature,
+                        seed=seed_i,
+                        max_tokens=max_tokens,
+                        stream=True,
+                        stream_options={"include_usage": True},
+                        tools = tools,
+                        tool_choice = "auto" if python_use else None
+                    )
 
-                partial_response=""
-                for chunk in response:
-                    if chunk.choices:
-                        txt = ""
-                        for choice in chunk.choices:
-                            cont = choice.delta.content
-                            if cont:
-                                txt += cont
+                    # Accumulators for partial model responses
+                    tool_name_accum = None
+                    tool_args_accum = ""
+                    tool_call_id = None
+                    # process
+                    for chunk in response:
+                        if chunk.choices:
+                            txt = ""
+                            for choice in chunk.choices:
+                                delta = choice.delta
+                                if not delta:
+                                    continue
 
-                        partial_response += txt
-                        yield partial_response
+                                cont = delta.content
+                                if cont:
+                                    txt += cont
+                                
+                                if delta.tool_calls:
+                                    for tc in delta.tool_calls:
+                                        if tc.function.name:
+                                            tool_name_accum = tc.function.name
+                                        if tc.function.arguments:
+                                            tool_args_accum += tc.function.arguments
+                                        if tc.id:
+                                            tool_call_id = tc.id
 
-                    if chunk.usage and log_to_console:
-                        print(f"usage: {chunk.usage}")
+                            finish_reason = choice.finish_reason
+                            if finish_reason:
+                                if finish_reason == "tool_calls":
+                                    try:
+                                        parsed_args = json.loads(tool_args_accum)
+                                        tool_script = parsed_args.get("python_source_code", "")
+
+                                        whole_response += f"\n``` script\n{tool_script}\n```\n"
+                                        yield whole_response
+
+                                        tool_result = eval_restricted_script(tool_script)
+
+                                        whole_response += f"\n``` result\n{tool_result if not tool_result['success'] else tool_result['prints']}\n```\n"
+                                        yield whole_response
+
+                                        history_openai_format.extend([
+                                            {
+                                                "role": "assistant",
+                                                "content": txt,
+                                                "tool_calls": [
+                                                    {
+                                                        "id": tool_call_id,
+                                                        "type": "function",
+                                                        "function": {
+                                                            "name": tool_name_accum,
+                                                            "arguments": json.dumps(parsed_args)
+                                                        }
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "role": "tool",
+                                                "tool_call_id": tool_call_id,
+                                                "name": tool_name_accum,
+                                                "content": json.dumps(tool_result)
+                                            }
+                                        ])
+
+                                    except Exception as e:
+                                        history_openai_format.extend([{
+                                            "role": "tool",
+                                            "tool_call_id": tool_call_id,
+                                            "name": tool_name_accum,
+                                            "content": [
+                                                {
+                                                    "toolResult": {
+                                                        "content": [{"text":  e.args[0]}],
+                                                        "status": 'error'
+                                                    }
+                                                }
+                                            ]
+                                        }])
+                                        whole_response += f"\n``` error\n{e.args[0]}\n```\n"
+                                        yield whole_response
+                                else:
+                                    return
+                            else:
+                                whole_response += txt
+                                yield whole_response
+                        if chunk.usage and log_to_console:
+                            print(f"usage: {chunk.usage}")
 
         if log_to_console:
             print(f"br_result: {str(history)}")
@@ -311,6 +414,7 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
         seed = gr.Textbox(label="Seed", elem_id="seed")
         temp = gr.Slider(0, 2, label="Temperature", elem_id="temp", value=1)
         max_tokens = gr.Slider(1, 16384, label="Max. Tokens", elem_id="max_tokens", value=800)
+        python_use = gr.Checkbox(label="Python Use", value=False)
         save_button = gr.Button("Save Settings")  
         load_button = gr.Button("Load Settings")  
         dl_settings_button = gr.Button("Download Settings")
@@ -345,7 +449,7 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
                        ('temp', '#temp input'),
                        ('max_tokens', '#max_tokens input'),
                        ('model', '#model')]
-        controls = [oai_key, system_prompt, seed, temp, max_tokens, model]
+        controls = [oai_key, system_prompt, seed, temp, max_tokens, model, python_use]
 
         dl_settings_button.click(None, controls, js=generate_download_settings_js("oai_chat_settings.bin", control_ids))
         ul_settings_button.click(None, None, None, js=generate_upload_settings_js(control_ids))
