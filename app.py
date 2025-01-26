@@ -458,6 +458,7 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
 
     chat = gr.ChatInterface(fn=bot, multimodal=True, additional_inputs=controls, autofocus = False)
     chat.textbox.file_count = "multiple"
+    chat.textbox.max_plain_text_length = 2**31
     chatbot = chat.chatbot
     chatbot.show_copy_button = True
     chatbot.height = 450
