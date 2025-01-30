@@ -280,7 +280,7 @@ def bot(message, history, oai_key, system_prompt, seed, temperature, max_tokens,
                         max_tokens=max_tokens,
                         stream=True,
                         stream_options={"include_usage": True},
-                        tools = tools,
+                        **{"tools": tools} if python_use else {},
                         tool_choice = "auto" if python_use else None
                     )
 
