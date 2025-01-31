@@ -232,6 +232,9 @@ def bot(message, history, oai_key, system_prompt, seed, temperature, max_tokens,
                     role = "system"
                 else:
                     role = "developer"
+
+                    if not system_prompt.startswith("Formatting re-enabled"):
+                        system_prompt = "Formatting re-enabled\n" + system_prompt
                 history_openai_format.append({"role": role, "content": system_prompt})
 
             for msg in history:
@@ -264,12 +267,21 @@ def bot(message, history, oai_key, system_prompt, seed, temperature, max_tokens,
             if log_to_console:
                 print(f"br_prompt: {str(history_openai_format)}")
 
-            if model in ["o1", "o1-high", "o1-2024-12-17", "o3-mini"]:
+            if model in ["o1", "o1-high", "o1-2024-12-17", "o3-mini", "o3-mini-high"]:
+                # reasoning effort
+                high = False
+                if model == "o1-high":
+                    model = "o1"
+                    high = True
+                elif model == "o3-mini-high":
+                    model = "o3-mini"
+                    high = True
+
                 response = client.chat.completions.create(
-                    model="o1" if model == "o1-high" else model,
+                    model=model,
                     messages= history_openai_format,
                     seed=seed_i,
-                    reasoning_effort="high" if model == "o1-high" else "medium",
+                    reasoning_effort="high" if high else "medium",
                     **({"max_completion_tokens": max_tokens} if max_tokens > 0 else {})
                 )
 
@@ -407,7 +419,7 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
 
         oai_key = gr.Textbox(label="OpenAI API Key", elem_id="oai_key")
         model = gr.Dropdown(label="Model", value="gpt-4-turbo", allow_custom_value=True, elem_id="model",
-                            choices=["gpt-4-turbo", "gpt-4o-2024-05-13", "gpt-4o-2024-11-20", "o1-high", "o1-mini", "o1", "o3-mini", "o1-preview", "chatgpt-4o-latest", "gpt-4o", "gpt-4o-mini", "gpt-4-turbo-preview", "gpt-4-1106-preview", "gpt-4", "gpt-4-vision-preview", "gpt-3.5-turbo", "gpt-3.5-turbo-16k", "gpt-3.5-turbo-1106", "whisper", "dall-e-3"])
+                            choices=["gpt-4o", "gpt-4-turbo", "o1-high", "o1-mini", "o1", "o3-mini-high", "o3-mini", "o1-preview", "chatgpt-4o-latest", "gpt-4o-2024-05-13", "gpt-4o-2024-11-20", "gpt-4o-mini", "gpt-4", "gpt-4-vision-preview", "gpt-3.5-turbo", "gpt-3.5-turbo-16k", "gpt-3.5-turbo-1106", "whisper", "dall-e-3"])
         system_prompt = gr.TextArea("You are a helpful yet diligent AI assistant. Answer faithfully and factually correct. Respond with 'I do not know' if uncertain.", label="System/Developer Prompt", lines=3, max_lines=250, elem_id="system_prompt")  
         seed = gr.Textbox(label="Seed", elem_id="seed")
         temp = gr.Slider(0, 2, label="Temperature", elem_id="temp", value=1)
