@@ -7,6 +7,7 @@ import fitz
 from PIL import Image
 import io
 from settings_mgr import generate_download_settings_js, generate_upload_settings_js
+from chat_export import import_history, get_export_js
 
 from doc2json import process_docx
 from code_exec import eval_restricted_script
@@ -118,7 +119,8 @@ def encode_file(fn: str) -> list:
             user_msg_parts.append({"type": "image_url",
                                 "image_url":{"url": content}})
         else:
-            user_msg_parts.append({"type": "text", "text": content})
+            fn = os.path.basename(fn)
+            user_msg_parts.append({"type": "text", "text": f"```{fn}\n{content}\n```"})
 
     return user_msg_parts
 
@@ -153,14 +155,15 @@ def bot(message, history, oai_key, system_prompt, seed, temperature, max_tokens,
         if model == "whisper":
             result = ""
             whisper_prompt = system_prompt
-            for human, assi in history:
-                if human is not None:
-                    if type(human) is tuple:
+            for msg in history:
+                content = msg["content"]
+                if msg["role"] == "user":
+                    if type(content) is tuple:
                         pass
                     else:
-                        whisper_prompt += f"\n{human}"
-                if assi is not None:
-                        whisper_prompt += f"\n{assi}"
+                        whisper_prompt += f"\n{content}"
+                if msg["role"] == "assistant":
+                        whisper_prompt += f"\n{content}"
 
             if message["text"]:
                 whisper_prompt += message["text"]
@@ -231,19 +234,24 @@ def bot(message, history, oai_key, system_prompt, seed, temperature, max_tokens,
                     role = "developer"
                 history_openai_format.append({"role": role, "content": system_prompt})
 
-            for human, assi in history:
-                if human is not None:
-                    if type(human) is tuple:
-                        user_msg_parts.extend(encode_file(human[0]))
-                    else:
-                        user_msg_parts.append({"type": "text", "text": human})
+            for msg in history:
+                role = msg["role"]
+                content = msg["content"]
 
-                if assi is not None:
+                if role == "user":
+                    if isinstance(content, gr.File) or isinstance(content, gr.Image):
+                        user_msg_parts.extend(encode_file(content.value['path']))
+                    elif isinstance(content, tuple):
+                        user_msg_parts.extend(encode_file(content[0]))
+                    else:
+                        user_msg_parts.append({"type": "text", "text": content})
+
+                if role == "assistant":
                     if user_msg_parts:
                         history_openai_format.append({"role": "user", "content": user_msg_parts})
                         user_msg_parts = []
 
-                    history_openai_format.append({"role": "assistant", "content": assi})
+                    history_openai_format.append({"role": "assistant", "content": content})
 
             if message["text"]:
                 user_msg_parts.append({"type": "text", "text": message["text"]})
@@ -378,28 +386,16 @@ def bot(message, history, oai_key, system_prompt, seed, temperature, max_tokens,
     except Exception as e:
         raise gr.Error(f"Error: {str(e)}")
 
-def import_history(history, file):
-    with open(file.name, mode="rb") as f:
-        content = f.read()
+def import_history_guarded(oai_key, history, file):
+    # check credentials first
+    try:
+        client = OpenAI(api_key=oai_key)
+        client.models.retrieve("gpt-4o")
+    except Exception as e:
+        raise gr.Error(f"OpenAI login error: {str(e)}")
 
-        if isinstance(content, bytes):
-            content = content.decode('utf-8', 'replace')
-        else:
-            content = str(content)
-    os.remove(file.name)
-
-    # Deserialize the JSON content
-    import_data = json.loads(content)
-
-    # Check if 'history' key exists for backward compatibility
-    if 'history' in import_data:
-        history = import_data['history']
-        system_prompt.value = import_data.get('system_prompt', '')  # Set default if not present
-    else:
-        # Assume it's an old format with only history data
-        history = import_data
-
-    return history, system_prompt.value  # Return system prompt value to be set in the UI
+    # actual import
+    return import_history(history, file)
 
 with gr.Blocks(delete_cache=(86400, 86400)) as demo:
     gr.Markdown("# OAI Chat (Nils' Version™️)")
@@ -456,7 +452,7 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
         dl_settings_button.click(None, controls, js=generate_download_settings_js("oai_chat_settings.bin", control_ids))
         ul_settings_button.click(None, None, None, js=generate_upload_settings_js(control_ids))
 
-    chat = gr.ChatInterface(fn=bot, multimodal=True, additional_inputs=controls, autofocus = False)
+    chat = gr.ChatInterface(fn=bot, multimodal=True, additional_inputs=controls, autofocus = False, type = "messages")
     chat.textbox.file_count = "multiple"
     chat.textbox.max_plain_text_length = 2**31
     chatbot = chat.chatbot
@@ -472,24 +468,7 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
     with gr.Accordion("Import/Export", open = False):
         import_button = gr.UploadButton("History Import")
         export_button = gr.Button("History Export")
-        export_button.click(lambda: None, [chatbot, system_prompt], js="""
-            (chat_history, system_prompt) => {
-                const export_data = {
-                    history: chat_history,
-                    system_prompt: system_prompt
-                };
-                const history_json = JSON.stringify(export_data);
-                const blob = new Blob([history_json], {type: 'application/json'});
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'chat_history.json';
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                URL.revokeObjectURL(url);
-            }
-            """)
+        export_button.click(lambda: None, [chatbot, system_prompt], js=get_export_js())
         dl_button = gr.Button("File download")
         dl_button.click(lambda: None, [chatbot], js="""
             (chat_history) => {
@@ -544,7 +523,9 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
                 }
             }
         """)
-        import_button.upload(import_history, inputs=[chatbot, import_button], outputs=[chatbot, system_prompt])
+        import_button.upload(import_history_guarded, 
+                            inputs=[oai_key, chatbot, import_button], 
+                            outputs=[chatbot, system_prompt])
 
 demo.unload(lambda: [os.remove(file) for file in temp_files])
 demo.queue(default_concurrency_limit = None).launch()
