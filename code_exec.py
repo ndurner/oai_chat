@@ -52,7 +52,7 @@ def eval_restricted_script(script):
         
         # Define allowed imports
         '__allowed_modules__': ['math', 'datetime'],
-        '__import__': __import__,
+        '__import__': safe_import,
         
         # Basic functions
         'len': len,
@@ -121,6 +121,12 @@ def _default_write_(obj):
         raise ValueError("Modules are not allowed in to be written to.")
     
     return obj
+
+def safe_import(name, globals=None, locals=None, fromlist=(), level=0):
+    allowed = ['math', 'datetime']
+    if name not in allowed:
+        raise ImportError(f"Import of module '{name}' is not allowed")
+    return __import__(name, globals, locals, fromlist, level)
 
 """ 
 Borrowed implementation of _inplacevar_ from the Zope Foundations's AccessControl module
