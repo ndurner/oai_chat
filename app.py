@@ -424,7 +424,7 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
         seed = gr.Textbox(label="Seed", elem_id="seed")
         temp = gr.Slider(0, 2, label="Temperature", elem_id="temp", value=1)
         max_tokens = gr.Slider(0, 16384, label="Max. Tokens", elem_id="max_tokens", value=800)
-        python_use = gr.Checkbox(label="Python Use", value=False, interactive=False)
+        python_use = gr.Checkbox(label="Python Use", value=False)
         save_button = gr.Button("Save Settings")  
         load_button = gr.Button("Load Settings")  
         dl_settings_button = gr.Button("Download Settings")
