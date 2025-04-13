@@ -3,7 +3,6 @@ import base64
 import os
 from openai import OpenAI
 import json
-import fitz
 from PIL import Image
 import io
 from settings_mgr import generate_download_settings_js, generate_upload_settings_js
@@ -50,55 +49,19 @@ def encode_image(image_data):
 
     return f"data:image/{image_type};base64,{base64.b64encode(image_data).decode('utf-8')}"
 
-def process_pdf_img(pdf_fn: str):
-    pdf = fitz.open(pdf_fn)
-    message_parts = []
-
-    for page in pdf.pages():
-        # Create a transformation matrix for rendering at the calculated scale
-        mat = fitz.Matrix(0.6, 0.6)
-        
-        # Render the page to a pixmap
-        pix = page.get_pixmap(matrix=mat, alpha=False)
-        
-        # Convert pixmap to PIL Image
-        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-        
-        # Convert PIL Image to bytes
-        img_byte_arr = io.BytesIO()
-        img.save(img_byte_arr, format='PNG')
-        img_byte_arr = img_byte_arr.getvalue()
-        
-        # Encode image to base64
-        base64_encoded = base64.b64encode(img_byte_arr).decode('utf-8')
-        
-        # Construct the data URL
-        image_url = f"data:image/png;base64,{base64_encoded}"
-        
-        # Append the message part
-        message_parts.append({
-            "type": "text",
-            "text": f"Page {page.number} of file '{pdf_fn}'"
-        })
-        message_parts.append({
-            "type": "image_url",
-            "image_url": {
-                "url": image_url,
-                "detail": "high"
-            }
-        })
-
-    pdf.close()
-
-    return message_parts
+def process_pdf(pdf_fn: str):
+    with open(pdf_fn, "rb") as pdf_file:
+        base64_string = base64.b64encode(pdf_file.read()).decode("utf-8")
+    return [{"type": "input_file", "filename": os.path.basename(pdf_fn), 
+        "file_data": f"data:application/pdf;base64,{base64_string}"}]
 
 def encode_file(fn: str) -> list:
     user_msg_parts = []
 
     if fn.endswith(".docx"):
-        user_msg_parts.append({"type": "text", "text": process_docx(fn)})
+        user_msg_parts.append({"type": "input_text", "text": process_docx(fn)})
     elif fn.endswith(".pdf"):
-        user_msg_parts.extend(process_pdf_img(fn))
+        user_msg_parts.extend(process_pdf(fn))
     else:
         with open(fn, mode="rb") as f:
             content = f.read()
@@ -116,11 +79,11 @@ def encode_file(fn: str) -> list:
             content = str(content)
 
         if isImage:
-            user_msg_parts.append({"type": "image_url",
-                                "image_url":{"url": content}})
+            user_msg_parts.append({"type": "input_image",
+                                "image_url": content})
         else:
             fn = os.path.basename(fn)
-            user_msg_parts.append({"type": "text", "text": f"```{fn}\n{content}\n```"})
+            user_msg_parts.append({"type": "input_text", "text": f"```{fn}\n{content}\n```"})
 
     return user_msg_parts
 
@@ -142,11 +105,11 @@ def save_settings(acc, sec, prompt, temp, tokens, model):
 def process_values_js():
     return """
     () => {
-        return ["oai_key", "system_prompt", "seed"];
+        return ["oai_key", "system_prompt"];
     }
     """
 
-def bot(message, history, oai_key, system_prompt, seed, temperature, max_tokens, model, python_use):
+def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model, python_use):
     try:
         client = OpenAI(
             api_key=oai_key
@@ -192,31 +155,25 @@ def bot(message, history, oai_key, system_prompt, seed, temperature, max_tokens,
             )
             yield gr.Image(response.data[0].url)
         else:
-            seed_i = None
-            if seed:
-                seed_i = int(seed)
-
             tools = None if not python_use else [
                 {
                     "type": "function",
-                    "function": {
-                        "name": "eval_python",
-                        "description": "Evaluate a simple script written in a conservative, restricted subset of Python."
-                                    "Note: Augmented assignments, in-place operations (e.g., +=, -=), lambdas (e.g. list comprehensions) are not supported. "
-                                    "Use regular assignments and operations instead. Only 'import math' is allowed. "
-                                    "Returns: unquoted results without HTML encoding.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "python_source_code": {
-                                    "type": "string",
-                                    "description": "The Python script that will run in a RestrictedPython context. "
-                                                "Avoid using augmented assignments or in-place operations (+=, -=, etc.), as well as lambdas (e.g. list comprehensions). "
-                                                "Use regular assignments and operations instead. Only 'import math' is allowed. Results need to be reported through print()."
-                                }
-                            },
-                            "required": ["python_source_code"]
-                        }
+                    "name": "eval_python",
+                    "description": "Evaluate a simple script written in a conservative, restricted subset of Python."
+                                "Note: Augmented assignments, in-place operations (e.g., +=, -=), lambdas (e.g. list comprehensions) are not supported. "
+                                "Use regular assignments and operations instead. Only 'import math' is allowed. "
+                                "Returns: unquoted results without HTML encoding.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "python_source_code": {
+                                "type": "string",
+                                "description": "The Python script that will run in a RestrictedPython context. "
+                                            "Avoid using augmented assignments or in-place operations (+=, -=, etc.), as well as lambdas (e.g. list comprehensions). "
+                                            "Use regular assignments and operations instead. Only 'import math' is allowed. Results need to be reported through print()."
+                            }
+                        },
+                        "required": ["python_source_code"]
                     }
                 }
             ]
@@ -247,7 +204,7 @@ def bot(message, history, oai_key, system_prompt, seed, temperature, max_tokens,
                     elif isinstance(content, tuple):
                         user_msg_parts.extend(encode_file(content[0]))
                     else:
-                        user_msg_parts.append({"type": "text", "text": content})
+                        user_msg_parts.append({"type": "input_text", "text": content})
 
                 if role == "assistant":
                     if user_msg_parts:
@@ -257,7 +214,7 @@ def bot(message, history, oai_key, system_prompt, seed, temperature, max_tokens,
                     history_openai_format.append({"role": "assistant", "content": content})
 
             if message["text"]:
-                user_msg_parts.append({"type": "text", "text": message["text"]})
+                user_msg_parts.append({"type": "input_text", "text": message["text"]})
             if message["files"]:
                 for file in message["files"]:
                     user_msg_parts.extend(encode_file(file))
@@ -268,6 +225,8 @@ def bot(message, history, oai_key, system_prompt, seed, temperature, max_tokens,
                 print(f"br_prompt: {str(history_openai_format)}")
 
             if model in ["o1", "o1-high", "o1-2024-12-17", "o3-mini", "o3-mini-high"]:
+                reasoner = True
+
                 # reasoning effort
                 high = False
                 if model == "o1-high":
@@ -276,121 +235,80 @@ def bot(message, history, oai_key, system_prompt, seed, temperature, max_tokens,
                 elif model == "o3-mini-high":
                     model = "o3-mini"
                     high = True
-
-                response = client.chat.completions.create(
-                    model=model,
-                    messages= history_openai_format,
-                    seed=seed_i,
-                    reasoning_effort="high" if high else "medium",
-                    **({"max_completion_tokens": max_tokens} if max_tokens > 0 else {})
-                )
-
-                yield response.choices[0].message.content
-
-                if log_to_console:
-                        print(f"usage: {response.usage}")
             else:
-                whole_response = ""
-                while True:
-                    response = client.chat.completions.create(
+                reasoner = False
+
+            whole_response = ""
+            loop_tool_calling = True
+            while loop_tool_calling:
+                with client.responses.stream(
                         model=model,
-                        messages= history_openai_format,
-                        temperature=temperature,
-                        seed=seed_i,
-                        max_tokens=max_tokens,
-                        stream=True,
-                        stream_options={"include_usage": True},
+                        input=history_openai_format,
+                        **{"temperature": temperature} if not reasoner else {},
+                        max_output_tokens=max_tokens,
                         **{"tools": tools} if python_use else {},
-                        tool_choice = "auto" if python_use else None
-                    )
+                        tool_choice = "auto" if python_use else None,
+                        store=False,
+                        **{"reasoning": {"effort": "high" if high else "medium" }} if reasoner else {}
+                ) as stream:
+                    loop_tool_calling = False
+                    for event in stream:
+                        if event.type == "response.output_text.delta":
+                            whole_response += event.delta
+                            yield whole_response
+                        elif event.type == "response.completed":
+                            response = event.response
+                            outputs = response.output
 
-                    # Accumulators for partial model responses
-                    tool_name_accum = None
-                    tool_args_accum = ""
-                    tool_call_id = None
-                    # process
-                    for chunk in response:
-                        if chunk.choices:
-                            txt = ""
-                            for choice in chunk.choices:
-                                delta = choice.delta
-                                if not delta:
-                                    continue
+                            for output in outputs:
+                                if output.type == "function_call":
+                                    if output.name == "eval_python":
+                                        try:
+                                            history_openai_format.append({
+                                                "type": "function_call",
+                                                "name": output.name,
+                                                "arguments": output.arguments,
+                                                "call_id": output.call_id
+                                            })
 
-                                cont = delta.content
-                                if cont:
-                                    txt += cont
-                                
-                                if delta.tool_calls:
-                                    for tc in delta.tool_calls:
-                                        if tc.function.name:
-                                            tool_name_accum = tc.function.name
-                                        if tc.function.arguments:
-                                            tool_args_accum += tc.function.arguments
-                                        if tc.id:
-                                            tool_call_id = tc.id
+                                            parsed_args = json.loads(output.arguments)
+                                            tool_script = parsed_args.get("python_source_code", "")
 
-                            finish_reason = choice.finish_reason
-                            if finish_reason:
-                                if finish_reason == "tool_calls":
-                                    try:
-                                        parsed_args = json.loads(tool_args_accum)
-                                        tool_script = parsed_args.get("python_source_code", "")
+                                            whole_response += f"\n``` script\n{tool_script}\n```\n"
+                                            yield whole_response
 
-                                        whole_response += f"\n``` script\n{tool_script}\n```\n"
-                                        yield whole_response
+                                            tool_result = eval_restricted_script(tool_script)
 
-                                        tool_result = eval_restricted_script(tool_script)
+                                            whole_response += f"\n``` result\n{tool_result if not tool_result['success'] else tool_result['prints']}\n```\n"
+                                            yield whole_response
 
-                                        whole_response += f"\n``` result\n{tool_result if not tool_result['success'] else tool_result['prints']}\n```\n"
-                                        yield whole_response
-
-                                        history_openai_format.extend([
-                                            {
-                                                "role": "assistant",
-                                                "content": txt,
-                                                "tool_calls": [
-                                                    {
-                                                        "id": tool_call_id,
-                                                        "type": "function",
-                                                        "function": {
-                                                            "name": tool_name_accum,
-                                                            "arguments": json.dumps(parsed_args)
+                                            history_openai_format.append({
+                                                "type": "function_call_output",
+                                                "call_id": output.call_id,
+                                                "output": json.dumps(tool_result)
+                                            })
+                                        except Exception as e:
+                                            history_openai_format.append({
+                                                "type": "function_call_output",
+                                                "call_id": output.call_id,
+                                                "output": {
+                                                        "toolResult": {
+                                                            "content": [{"text":  e.args[0]}],
+                                                            "status": 'error'
                                                         }
-                                                    }
-                                                ]
-                                            },
-                                            {
-                                                "role": "tool",
-                                                "tool_call_id": tool_call_id,
-                                                "name": tool_name_accum,
-                                                "content": json.dumps(tool_result)
-                                            }
-                                        ])
-
-                                    except Exception as e:
-                                        history_openai_format.extend([{
-                                            "role": "tool",
-                                            "tool_call_id": tool_call_id,
-                                            "name": tool_name_accum,
-                                            "content": [
-                                                {
-                                                    "toolResult": {
-                                                        "content": [{"text":  e.args[0]}],
-                                                        "status": 'error'
-                                                    }
                                                 }
-                                            ]
-                                        }])
-                                        whole_response += f"\n``` error\n{e.args[0]}\n```\n"
-                                        yield whole_response
-                                else:
-                                    return
-                            else:
-                                whole_response += txt
-                                yield whole_response
-                        if chunk.usage and log_to_console:
-                            print(f"usage: {chunk.usage}")
+                                            })
+
+                                            whole_response += f"\n``` error\n{e.args[0]}\n```\n"
+                                            yield whole_response
+                                    else:
+                                            history_openai_format.append(outputs)
+
+                                    loop_tool_calling = True
+                            
+                            if log_to_console:
+                                print(f"usage: {event.usage}")
+
 
         if log_to_console:
             print(f"br_result: {str(history)}")
@@ -421,7 +339,6 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
         model = gr.Dropdown(label="Model", value="gpt-4-turbo", allow_custom_value=True, elem_id="model",
                             choices=["gpt-4o", "gpt-4-turbo", "o1-high", "o1-mini", "o1", "o3-mini-high", "o3-mini", "o1-preview", "chatgpt-4o-latest", "gpt-4o-2024-05-13", "gpt-4o-2024-11-20", "gpt-4o-mini", "gpt-4", "gpt-4.5-preview", "gpt-3.5-turbo", "gpt-3.5-turbo-16k", "gpt-3.5-turbo-1106", "whisper", "dall-e-3"])
         system_prompt = gr.TextArea("You are a helpful yet diligent AI assistant. Answer faithfully and factually correct. Respond with 'I do not know' if uncertain.", label="System/Developer Prompt", lines=3, max_lines=250, elem_id="system_prompt")  
-        seed = gr.Textbox(label="Seed", elem_id="seed")
         temp = gr.Slider(0, 2, label="Temperature", elem_id="temp", value=1)
         max_tokens = gr.Slider(0, 16384, label="Max. Tokens", elem_id="max_tokens", value=800)
         python_use = gr.Checkbox(label="Python Use", value=False)
@@ -432,7 +349,7 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
 
         load_button.click(load_settings, js="""  
             () => {  
-                let elems = ['#oai_key textarea', '#system_prompt textarea', '#seed textarea', '#temp input', '#max_tokens input', '#model'];
+                let elems = ['#oai_key textarea', '#system_prompt textarea', '#temp input', '#max_tokens input', '#model'];
                 elems.forEach(elem => {
                     let item = document.querySelector(elem);
                     let event = new InputEvent('input', { bubbles: true });
@@ -442,11 +359,10 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
             }  
         """)
 
-        save_button.click(save_settings, [oai_key, system_prompt, seed, temp, max_tokens, model], js="""  
-            (oai, sys, seed, temp, ntok, model) => {  
+        save_button.click(save_settings, [oai_key, system_prompt, temp, max_tokens, model], js="""  
+            (oai, sys, temp, ntok, model) => {  
                 localStorage.setItem('oai_key', oai);  
                 localStorage.setItem('system_prompt', sys);  
-                localStorage.setItem('seed', seed);  
                 localStorage.setItem('temp', document.querySelector('#temp input').value);  
                 localStorage.setItem('max_tokens', document.querySelector('#max_tokens input').value);  
                 localStorage.setItem('model', model);  
@@ -455,11 +371,10 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
 
         control_ids = [('oai_key', '#oai_key textarea'),
                        ('system_prompt', '#system_prompt textarea'),
-                       ('seed', '#seed textarea'),
                        ('temp', '#temp input'),
                        ('max_tokens', '#max_tokens input'),
                        ('model', '#model')]
-        controls = [oai_key, system_prompt, seed, temp, max_tokens, model, python_use]
+        controls = [oai_key, system_prompt, temp, max_tokens, model, python_use]
 
         dl_settings_button.click(None, controls, js=generate_download_settings_js("oai_chat_settings.bin", control_ids))
         ul_settings_button.click(None, None, None, js=generate_upload_settings_js(control_ids))

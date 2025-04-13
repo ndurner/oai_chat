@@ -1,6 +1,5 @@
 pydantic == 2.10.6
 gradio == 5.7.1
-openai == 1.60.1
+openai == 1.72.0
 lxml
-PyMuPDF
 RestrictedPython
