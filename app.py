@@ -109,7 +109,7 @@ def process_values_js():
     }
     """
 
-def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model, python_use):
+def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model, python_use, web_search):
     try:
         client = OpenAI(
             api_key=oai_key
@@ -155,8 +155,9 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
             )
             yield gr.Image(response.data[0].url)
         else:
-            tools = None if not python_use else [
-                {
+            tools = []
+            if python_use:
+                tools.append({
                     "type": "function",
                     "name": "eval_python",
                     "description": "Evaluate a simple script written in a conservative, restricted subset of Python."
@@ -175,8 +176,14 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
                         },
                         "required": ["python_source_code"]
                     }
-                }
-            ]
+                })
+            if web_search:
+                tools.append({
+                    "type": "web_search",
+                    "search_context_size": "high"
+                    })
+            if not tools:
+                tools = None
 
             if log_to_console:
                 print(f"bot history: {str(history)}")
@@ -246,8 +253,8 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
                         input=history_openai_format,
                         **{"temperature": temperature} if not reasoner else {},
                         max_output_tokens=max_tokens,
-                        **{"tools": tools} if python_use else {},
-                        tool_choice = "auto" if python_use else None,
+                        **{"tools": tools} if tools else {},
+                        tool_choice = "auto" if tools else None,
                         store=False,
                         **{"reasoning": {"effort": "high" if high else "medium" }} if reasoner else {}
                 ) as stream:
@@ -261,7 +268,23 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
                             outputs = response.output
 
                             for output in outputs:
-                                if output.type == "function_call":
+                                if output.type == "message":
+                                    for part in output.content:
+                                        if part.type == "output_text":
+                                            anns = part.annotations
+                                            if anns:
+                                                link_lines = []
+                                                for ann in anns:
+                                                    if ann.type == "url_citation":
+                                                        url = ann.url
+                                                        title = ann.title
+                                                        link_lines.append(f"- [{title}]({url})")
+                                                if link_lines:
+                                                    link_lines = list(dict.fromkeys(link_lines))
+                                                    whole_response += "\n\n**Citations:**\n" + "\n".join(link_lines)
+                                                    yield whole_response
+
+                                elif output.type == "function_call":
                                     if output.name == "eval_python":
                                         try:
                                             history_openai_format.append({
@@ -342,6 +365,7 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
         temp = gr.Slider(0, 2, label="Temperature", elem_id="temp", value=1)
         max_tokens = gr.Slider(0, 16384, label="Max. Tokens", elem_id="max_tokens", value=800)
         python_use = gr.Checkbox(label="Python Use", value=False)
+        web_search = gr.Checkbox(label="Web Search", value=False)
         save_button = gr.Button("Save Settings")  
         load_button = gr.Button("Load Settings")  
         dl_settings_button = gr.Button("Download Settings")
@@ -374,7 +398,7 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
                        ('temp', '#temp input'),
                        ('max_tokens', '#max_tokens input'),
                        ('model', '#model')]
-        controls = [oai_key, system_prompt, temp, max_tokens, model, python_use]
+        controls = [oai_key, system_prompt, temp, max_tokens, model, python_use, web_search]
 
         dl_settings_button.click(None, controls, js=generate_download_settings_js("oai_chat_settings.bin", control_ids))
         ul_settings_button.click(None, None, None, js=generate_upload_settings_js(control_ids))
