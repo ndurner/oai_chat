@@ -336,8 +336,8 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
                     those of the LLM vendor (OpenAI) and hosting provider (Hugging Face). This app and the AI models may make mistakes, so verify any outputs.""")
 
         oai_key = gr.Textbox(label="OpenAI API Key", elem_id="oai_key")
-        model = gr.Dropdown(label="Model", value="gpt-4o", allow_custom_value=True, elem_id="model",
-                            choices=["gpt-4o", "gpt-4.5-preview", "o1-high", "o1-mini", "o1", "o3-mini-high", "o3-mini", "o1-preview", "chatgpt-4o-latest", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "whisper", "dall-e-3"])
+        model = gr.Dropdown(label="Model", value="gpt-4.1", allow_custom_value=True, elem_id="model",
+                            choices=["gpt-4o", "gpt-4.1", "gpt-4.5-preview", "o1-high", "o1-mini", "o1", "o3-mini-high", "o3-mini", "o1-preview", "chatgpt-4o-latest", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "whisper", "dall-e-3"])
         system_prompt = gr.TextArea("You are a helpful yet diligent AI assistant. Answer faithfully and factually correct. Respond with 'I do not know' if uncertain.", label="System/Developer Prompt", lines=3, max_lines=250, elem_id="system_prompt")  
         temp = gr.Slider(0, 2, label="Temperature", elem_id="temp", value=1)
         max_tokens = gr.Slider(0, 16384, label="Max. Tokens", elem_id="max_tokens", value=800)
