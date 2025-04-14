@@ -328,7 +328,7 @@ def import_history_guarded(oai_key, history, file):
     return import_history(history, file)
 
 with gr.Blocks(delete_cache=(86400, 86400)) as demo:
-    gr.Markdown("# OAI Chat (Nils' Version™️)")
+    gr.Markdown("# OpenAI™️ Chat (Nils' Version™️)")
     with gr.Accordion("Startup"):
         gr.Markdown("""Use of this interface permitted under the terms and conditions of the 
                     [MIT license](https://github.com/ndurner/oai_chat/blob/main/LICENSE).
