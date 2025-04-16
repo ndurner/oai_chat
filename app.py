@@ -338,7 +338,9 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
                             
                             if log_to_console:
                                 print(f"usage: {event.usage}")
-
+                        elif event.type == "response.incomplete":
+                            gr.Warning(f"Incomplete response, reason: {event.response.incomplete_details.reason}")
+                            yield whole_response
 
         if log_to_console:
             print(f"br_result: {str(history)}")
