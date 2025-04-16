@@ -231,7 +231,8 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
             if log_to_console:
                 print(f"br_prompt: {str(history_openai_format)}")
 
-            if model in ["o1", "o1-high", "o1-2024-12-17", "o3-mini", "o3-mini-high"]:
+            if model in ["o1", "o1-high", "o1-2024-12-17", "o3-mini", "o3-mini-high", "o4-mini", "o4-mini-high",
+                         "o3", "o3-high"]:
                 reasoner = True
 
                 # reasoning effort
@@ -241,6 +242,12 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
                     high = True
                 elif model == "o3-mini-high":
                     model = "o3-mini"
+                    high = True
+                elif model == "o4-mini-high":
+                    model = "o4-mini"
+                    high = True
+                elif model == "o3-high":
+                    model = "o3"
                     high = True
             else:
                 reasoner = False
@@ -360,7 +367,7 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
 
         oai_key = gr.Textbox(label="OpenAI API Key", elem_id="oai_key")
         model = gr.Dropdown(label="Model", value="gpt-4.1", allow_custom_value=True, elem_id="model",
-                            choices=["gpt-4o", "gpt-4.1", "gpt-4.5-preview", "o1-high", "o1-mini", "o1", "o3-mini-high", "o3-mini", "o1-preview", "chatgpt-4o-latest", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "whisper", "dall-e-3"])
+                            choices=["gpt-4o", "gpt-4.1", "gpt-4.5-preview", "o3", "o3-high", "o1-high", "o1-mini", "o1", "o3-mini-high", "o3-mini", "o4-mini", "o4-mini-high", "chatgpt-4o-latest", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "whisper", "dall-e-3"])
         system_prompt = gr.TextArea("You are a helpful yet diligent AI assistant. Answer faithfully and factually correct. Respond with 'I do not know' if uncertain.", label="System/Developer Prompt", lines=3, max_lines=250, elem_id="system_prompt")  
         temp = gr.Slider(0, 2, label="Temperature", elem_id="temp", value=1)
         max_tokens = gr.Slider(0, 16384, label="Max. Tokens", elem_id="max_tokens", value=800)
