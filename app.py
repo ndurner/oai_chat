@@ -7,6 +7,7 @@ from PIL import Image
 import io
 from settings_mgr import generate_download_settings_js, generate_upload_settings_js
 from chat_export import import_history, get_export_js
+from types import SimpleNamespace
 
 from doc2json import process_docx
 from code_exec import eval_restricted_script
@@ -255,92 +256,111 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
             whole_response = ""
             loop_tool_calling = True
             while loop_tool_calling:
-                with client.responses.stream(
-                        model=model,
-                        input=history_openai_format,
-                        **{"temperature": temperature} if not reasoner else {},
-                        max_output_tokens=max_tokens,
-                        **{"tools": tools} if tools else {},
-                        tool_choice = "auto" if tools else None,
-                        store=False,
-                        **{"reasoning": {"effort": "high" if high else "medium" }} if reasoner else {}
-                ) as stream:
-                    loop_tool_calling = False
-                    for event in stream:
-                        if event.type == "response.output_text.delta":
-                            whole_response += event.delta
-                            yield whole_response
-                        elif event.type == "response.completed":
-                            response = event.response
-                            outputs = response.output
+                request_params = {
+                    "model": model,
+                    "input": history_openai_format,
+                    "max_output_tokens": max_tokens,
+                    "store": False
+                }
+                if reasoner:
+                    request_params["reasoning"] = {"effort": "high" if high else "medium"}
+                else:
+                    request_params["temperature"] = temperature
+                if tools:
+                    request_params["tools"] = tools
+                    request_params["tool_choice"] = "auto"
 
-                            for output in outputs:
-                                if output.type == "message":
-                                    for part in output.content:
-                                        if part.type == "output_text":
-                                            anns = part.annotations
-                                            if anns:
-                                                link_lines = []
-                                                for ann in anns:
-                                                    if ann.type == "url_citation":
-                                                        url = ann.url
-                                                        title = ann.title
-                                                        link_lines.append(f"- [{title}]({url})")
-                                                if link_lines:
-                                                    link_lines = list(dict.fromkeys(link_lines))
-                                                    whole_response += "\n\n**Citations:**\n" + "\n".join(link_lines)
-                                                    yield whole_response
+                try:
+                    stream = client.responses.create(stream=True, **request_params)
+                    have_stream = True
+                except Exception as e:
+                    # fallback to non‑streaming; wrap the single full response in a fake "completed" event
+                    # this happens with o3 via un-verified OpenAI accounts
+                    response = client.responses.create(stream=False, **request_params)
+                    stream = iter([SimpleNamespace(type="response.completed", response=response)])
+                    have_stream = False
 
-                                elif output.type == "function_call":
-                                    if output.name == "eval_python":
-                                        try:
-                                            history_openai_format.append({
-                                                "type": "function_call",
-                                                "name": output.name,
-                                                "arguments": output.arguments,
-                                                "call_id": output.call_id
-                                            })
+                loop_tool_calling = False
+                for event in stream:
+                    if event.type == "response.output_text.delta":
+                        whole_response += event.delta
+                        yield whole_response
+                    elif event.type == "response.completed":
+                        response = event.response
+                        outputs = response.output
 
-                                            parsed_args = json.loads(output.arguments)
-                                            tool_script = parsed_args.get("python_source_code", "")
-
-                                            whole_response += f"\n``` script\n{tool_script}\n```\n"
+                        for output in outputs:
+                            if output.type == "message":
+                                for part in output.content:
+                                    if part.type == "output_text":
+                                        if not have_stream:
+                                            # response text was not collected through streaming events, so get it here
+                                            whole_response += part.text
                                             yield whole_response
 
-                                            tool_result = eval_restricted_script(tool_script)
+                                        anns = part.annotations
+                                        if anns:
+                                            link_lines = []
+                                            for ann in anns:
+                                                if ann.type == "url_citation":
+                                                    url = ann.url
+                                                    title = ann.title
+                                                    link_lines.append(f"- [{title}]({url})")
+                                            if link_lines:
+                                                link_lines = list(dict.fromkeys(link_lines))
+                                                whole_response += "\n\n**Citations:**\n" + "\n".join(link_lines)
+                                                yield whole_response
 
-                                            whole_response += f"\n``` result\n{tool_result if not tool_result['success'] else tool_result['prints']}\n```\n"
-                                            yield whole_response
+                            elif output.type == "function_call":
+                                if output.name == "eval_python":
+                                    try:
+                                        history_openai_format.append({
+                                            "type": "function_call",
+                                            "name": output.name,
+                                            "arguments": output.arguments,
+                                            "call_id": output.call_id
+                                        })
 
-                                            history_openai_format.append({
-                                                "type": "function_call_output",
-                                                "call_id": output.call_id,
-                                                "output": json.dumps(tool_result)
-                                            })
-                                        except Exception as e:
-                                            history_openai_format.append({
-                                                "type": "function_call_output",
-                                                "call_id": output.call_id,
-                                                "output": {
-                                                        "toolResult": {
-                                                            "content": [{"text":  e.args[0]}],
-                                                            "status": 'error'
-                                                        }
-                                                }
-                                            })
+                                        parsed_args = json.loads(output.arguments)
+                                        tool_script = parsed_args.get("python_source_code", "")
 
-                                            whole_response += f"\n``` error\n{e.args[0]}\n```\n"
-                                            yield whole_response
-                                    else:
-                                            history_openai_format.append(outputs)
+                                        whole_response += f"\n``` script\n{tool_script}\n```\n"
+                                        yield whole_response
 
-                                    loop_tool_calling = True
-                            
-                            if log_to_console:
-                                print(f"usage: {event.usage}")
-                        elif event.type == "response.incomplete":
-                            gr.Warning(f"Incomplete response, reason: {event.response.incomplete_details.reason}")
-                            yield whole_response
+                                        tool_result = eval_restricted_script(tool_script)
+
+                                        whole_response += f"\n``` result\n{tool_result if not tool_result['success'] else tool_result['prints']}\n```\n"
+                                        yield whole_response
+
+                                        history_openai_format.append({
+                                            "type": "function_call_output",
+                                            "call_id": output.call_id,
+                                            "output": json.dumps(tool_result)
+                                        })
+                                    except Exception as e:
+                                        history_openai_format.append({
+                                            "type": "function_call_output",
+                                            "call_id": output.call_id,
+                                            "output": {
+                                                    "toolResult": {
+                                                        "content": [{"text":  e.args[0]}],
+                                                        "status": 'error'
+                                                    }
+                                            }
+                                        })
+
+                                        whole_response += f"\n``` error\n{e.args[0]}\n```\n"
+                                        yield whole_response
+                                else:
+                                        history_openai_format.append(outputs)
+
+                                loop_tool_calling = True
+                        
+                        if log_to_console:
+                            print(f"usage: {event.usage}")
+                    elif event.type == "response.incomplete":
+                        gr.Warning(f"Incomplete response, reason: {event.response.incomplete_details.reason}")
+                        yield whole_response
 
         if log_to_console:
             print(f"br_result: {str(history)}")
