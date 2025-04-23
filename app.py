@@ -146,15 +146,21 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
             
             yield result
 
-        elif model == "dall-e-3":
+        elif model == "gpt-image-1":
             response = client.images.generate(
                 model=model,
                 prompt=message["text"],
-                size="1792x1024",
-                quality="hd",
-                n=1,
+                quality="high"
             )
-            yield gr.Image(response.data[0].url)
+
+            b64data = response.data[0].b64_json
+            img_bytes = base64.b64decode(b64data)
+            pil_img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+
+            yield gr.ChatMessage(
+                role="assistant",
+                content=gr.Image(type="pil", value=pil_img)
+            )
         else:
             tools = []
             if python_use:
@@ -393,7 +399,7 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
 
         oai_key = gr.Textbox(label="OpenAI API Key", elem_id="oai_key")
         model = gr.Dropdown(label="Model", value="gpt-4.1", allow_custom_value=True, elem_id="model",
-                            choices=["gpt-4o", "gpt-4.1", "gpt-4.5-preview", "o3", "o3-high", "o1-pro", "o1-high", "o1-mini", "o1", "o3-mini-high", "o3-mini", "o4-mini", "o4-mini-high", "chatgpt-4o-latest", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "whisper", "dall-e-3"])
+                            choices=["gpt-4o", "gpt-4.1", "gpt-4.5-preview", "o3", "o3-high", "o1-pro", "o1-high", "o1-mini", "o1", "o3-mini-high", "o3-mini", "o4-mini", "o4-mini-high", "chatgpt-4o-latest", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "whisper", "gpt-image-1"])
         system_prompt = gr.TextArea("You are a helpful yet diligent AI assistant. Answer faithfully and factually correct. Respond with 'I do not know' if uncertain.", label="System/Developer Prompt", lines=3, max_lines=250, elem_id="system_prompt")  
         temp = gr.Slider(0, 2, label="Temperature", elem_id="temp", value=1)
         max_tokens = gr.Slider(0, 16384, label="Max. Tokens", elem_id="max_tokens", value=0)
