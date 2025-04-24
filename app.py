@@ -147,16 +147,29 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
             yield result
 
         elif model == "gpt-image-1":
-            response = client.images.generate(
-                model=model,
-                prompt=message["text"],
-                quality="high"
-            )
+            if message.get("files"):
+                image_files = []
+                for file in message["files"]:
+                    image_files.append(open(file, "rb"))
 
+                response = client.images.edit(
+                    model=model,
+                    image=image_files,
+                    prompt=message["text"],
+                    quality="high"
+                )
+                for f in image_files:
+                    f.close()
+            else:
+                response = client.images.generate(
+                    model=model,
+                    prompt=message["text"],
+                    quality="high",
+                    moderation="low"
+                )
             b64data = response.data[0].b64_json
             img_bytes = base64.b64decode(b64data)
             pil_img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-
             yield gr.ChatMessage(
                 role="assistant",
                 content=gr.Image(type="pil", value=pil_img)
