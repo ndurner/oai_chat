@@ -7,6 +7,7 @@ from PIL import Image
 import io
 from settings_mgr import generate_download_settings_js, generate_upload_settings_js
 from chat_export import import_history, get_export_js
+from mcp_registry import load_registry, to_openai_tool
 from types import SimpleNamespace
 
 from doc2json import process_docx
@@ -16,6 +17,7 @@ dump_controls = False
 log_to_console = False
 
 temp_files = []
+mcp_servers = load_registry()
 
 def encode_image(image_data):
     """Generates a prefix for image base64 data in the required format for the
@@ -110,7 +112,7 @@ def process_values_js():
     }
     """
 
-def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model, python_use, web_search):
+def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model, python_use, web_search, *mcp_selected):
     try:
         client = OpenAI(
             api_key=oai_key
@@ -202,6 +204,9 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
                     "type": "web_search",
                     "search_context_size": "high"
                     })
+            for sel, entry in zip(mcp_selected, mcp_servers):
+                if sel:
+                    tools.append(to_openai_tool(entry))
             if not tools:
                 tools = None
 
@@ -418,7 +423,11 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
         max_tokens = gr.Slider(0, 16384, label="Max. Tokens", elem_id="max_tokens", value=0)
         python_use = gr.Checkbox(label="Python Use", value=False)
         web_search = gr.Checkbox(label="Web Search", value=False)
-        save_button = gr.Button("Save Settings")  
+        mcp_boxes = []
+        for entry in mcp_servers:
+            label = f"MCP: {entry.get('server_label', entry.get('name'))}"
+            mcp_boxes.append(gr.Checkbox(label=label, value=False))
+        save_button = gr.Button("Save Settings")
         load_button = gr.Button("Load Settings")  
         dl_settings_button = gr.Button("Download Settings")
         ul_settings_button = gr.Button("Upload Settings")
@@ -450,7 +459,7 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
                        ('temp', '#temp input'),
                        ('max_tokens', '#max_tokens input'),
                        ('model', '#model')]
-        controls = [oai_key, system_prompt, temp, max_tokens, model, python_use, web_search]
+        controls = [oai_key, system_prompt, temp, max_tokens, model, python_use, web_search] + mcp_boxes
 
         dl_settings_button.click(None, controls, js=generate_download_settings_js("oai_chat_settings.bin", control_ids))
         ul_settings_button.click(None, None, None, js=generate_upload_settings_js(control_ids))
