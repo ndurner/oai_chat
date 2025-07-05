@@ -7,6 +7,7 @@ from PIL import Image
 import io
 from settings_mgr import generate_download_settings_js, generate_upload_settings_js
 from chat_export import import_history, get_export_js
+from mcp_registry import load_registry, to_openai_tool
 from types import SimpleNamespace
 
 from doc2json import process_docx
@@ -16,6 +17,8 @@ dump_controls = False
 log_to_console = False
 
 temp_files = []
+mcp_servers = load_registry()
+pending_mcp_request = None
 
 def encode_image(image_data):
     """Generates a prefix for image base64 data in the required format for the
@@ -95,9 +98,18 @@ def undo(history):
 def dump(history):
     return str(history)
 
-def load_settings():  
-    # Dummy Python function, actual loading is done in JS  
-    pass  
+def load_settings():
+    # Dummy Python function, actual loading is done in JS
+    pass
+
+def _event_to_dict(obj):
+    if hasattr(obj, "model_dump"):
+        return obj.model_dump()
+    if hasattr(obj, "to_dict"):
+        return obj.to_dict()
+    if hasattr(obj, "__dict__"):
+        return {k: v for k, v in obj.__dict__.items() if not k.startswith("_")}
+    return {"type": getattr(obj, "type", "unknown")}
 
 def save_settings(acc, sec, prompt, temp, tokens, model):  
     # Dummy Python function, actual saving is done in JS  
@@ -110,11 +122,33 @@ def process_values_js():
     }
     """
 
-def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model, python_use, web_search):
+def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model, python_use, web_search, *mcp_selected):
+    global pending_mcp_request
     try:
         client = OpenAI(
             api_key=oai_key
         )
+
+        approval_items = []
+        if pending_mcp_request:
+            txt = (message.get("text", "") or "").strip()
+            if not txt:
+                raise gr.Error("MCP tool call awaiting confirmation. Reply with 'y' to approve or 'n' to deny, optionally followed by a message.")
+            flag = txt[0].lower()
+            if flag == 'y':
+                approve = True
+            elif flag == 'n':
+                approve = False
+            else:
+                raise gr.Error("MCP tool call awaiting confirmation. Start your reply with 'y' or 'n'.")
+            message["text"] = txt[1:].lstrip()
+            approval_items.append(pending_mcp_request)
+            approval_items.append({
+                "type": "mcp_approval_response",
+                "approval_request_id": pending_mcp_request.get("id"),
+                "approve": approve,
+            })
+            pending_mcp_request = None
 
         if model == "whisper":
             result = ""
@@ -202,6 +236,9 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
                     "type": "web_search",
                     "search_context_size": "high"
                     })
+            for sel, entry in zip(mcp_selected, mcp_servers):
+                if sel:
+                    tools.append(to_openai_tool(entry))
             if not tools:
                 tools = None
 
@@ -239,6 +276,9 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
                         user_msg_parts = []
 
                     history_openai_format.append({"role": "assistant", "content": content})
+
+            for item in approval_items:
+                history_openai_format.append(item)
 
             if message["text"]:
                 user_msg_parts.append({"type": "input_text", "text": message["text"]})
@@ -378,6 +418,18 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
                                         history_openai_format.append(outputs)
 
                                 loop_tool_calling = True
+                            elif output.type == "mcp_approval_request":
+                                pending_mcp_request = _event_to_dict(output)
+                                whole_response += (f"\nMCP approval needed for {output.name}"
+                                                 f" on {output.server_label} with arguments {output.arguments}.")
+                                yield whole_response
+                                return
+                            elif output.type == "mcp_call":
+                                history_openai_format.append(_event_to_dict(output))
+                                if getattr(output, "output", None) is not None:
+                                    whole_response += f"\n``` mcp_result\n{output.output}\n```\n"
+                                    yield whole_response
+                                loop_tool_calling = True
                         
                         if log_to_console:
                             print(f"usage: {event.usage}")
@@ -418,7 +470,11 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
         max_tokens = gr.Slider(0, 16384, label="Max. Tokens", elem_id="max_tokens", value=0)
         python_use = gr.Checkbox(label="Python Use", value=False)
         web_search = gr.Checkbox(label="Web Search", value=False)
-        save_button = gr.Button("Save Settings")  
+        mcp_boxes = []
+        for entry in mcp_servers:
+            label = f"MCP: {entry.get('server_label', entry.get('name'))}"
+            mcp_boxes.append(gr.Checkbox(label=label, value=False))
+        save_button = gr.Button("Save Settings")
         load_button = gr.Button("Load Settings")  
         dl_settings_button = gr.Button("Download Settings")
         ul_settings_button = gr.Button("Upload Settings")
@@ -450,17 +506,26 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
                        ('temp', '#temp input'),
                        ('max_tokens', '#max_tokens input'),
                        ('model', '#model')]
-        controls = [oai_key, system_prompt, temp, max_tokens, model, python_use, web_search]
+        controls = [oai_key, system_prompt, temp, max_tokens, model, python_use, web_search] + mcp_boxes
 
         dl_settings_button.click(None, controls, js=generate_download_settings_js("oai_chat_settings.bin", control_ids))
         ul_settings_button.click(None, None, None, js=generate_upload_settings_js(control_ids))
 
-    chat = gr.ChatInterface(fn=bot, multimodal=True, additional_inputs=controls, autofocus = False, type = "messages")
+    chat = gr.ChatInterface(
+        fn=bot,
+        multimodal=True,
+        additional_inputs=controls,
+        autofocus=False,
+        type="messages",
+        chatbot=gr.Chatbot(elem_id="chatbot", type="messages"),
+        textbox=gr.MultimodalTextbox(elem_id="chat_input"),
+    )
     chat.textbox.file_count = "multiple"
     chat.textbox.max_plain_text_length = 2**31
     chatbot = chat.chatbot
     chatbot.show_copy_button = True
     chatbot.height = 450
+
 
     if dump_controls:
         with gr.Row():

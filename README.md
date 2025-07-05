@@ -23,3 +23,15 @@ Features:
    * example: download an ICS calendar file the model has created for you
 * streaming chat
 * image generation (via DALL-E 3)
+* remote MCP server support via configurable registry
+
+The MCP registry is looked up in the following order:
+1. `$OAI_CHAT_MCP_REGISTRY` if set
+2. `mcp_registry.json` in this repository
+3. `~/.oai_chat/mcp_registry.json`
+
+See `mcp_registry.sample.json` for an example configuration.
+Headers and query parameters may reference environment variables using the `env:` prefix.
+Use `"allowed_tools": ["*"]` to permit all tools from a server.
+When an MCP tool requires approval, the assistant will notify you in chat.
+Reply with `y` to approve or `n` to deny the request, optionally adding a comment after the `y` or `n`.

@@ -1,0 +1,21 @@
+{
+  "version": "1.0",
+
+  "defaults": {
+    "require_approval": "auto"
+  },
+
+  "servers": [
+    {
+      "name": "exa",
+      "url": "https://mcp.exa.ai/mcp",
+      "query_params": {
+        "exaApiKey": "env:EXA_API_KEY"
+      },
+      "allowed_tools": ["*"],
+      "require_approval": {
+        "never": { "tool_names": ["search"] }
+      }
+    }
+  ]
+}
