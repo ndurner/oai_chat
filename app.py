@@ -303,7 +303,7 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
 
                     if not system_prompt.startswith("Formatting re-enabled"):
                         system_prompt = "Formatting re-enabled\n" + system_prompt
-                history_openai_format.append({"role": role, "content": system_prompt})
+                history_openai_format.append({"role": role, "content": system_prompt, "type": "message"})
 
             for msg in history:
                 role = msg.role if hasattr(msg, "role") else msg["role"]
@@ -314,10 +314,10 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
 
                 if role == "assistant":
                     if user_msg_parts:
-                        history_openai_format.append({"role": "user", "content": user_msg_parts})
+                        history_openai_format.append({"role": "user", "content": user_msg_parts, "type": "message"})
                         user_msg_parts = []
 
-                    history_openai_format.append({"role": "assistant", "content": str(content)})
+                    history_openai_format.append({"role": "assistant", "content": str(content), "type": "message"})
 
             for item in approval_items:
                 history_openai_format.append(item)
@@ -327,7 +327,7 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
             if message["files"]:
                 for file in message["files"]:
                     user_msg_parts.extend(encode_file(file))
-            history_openai_format.append({"role": "user", "content": user_msg_parts})
+            history_openai_format.append({"role": "user", "content": user_msg_parts, "type": "message"})
             user_msg_parts = []
 
             if log_to_console:
@@ -360,6 +360,7 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
             assistant_msgs = []
             whole_response = ""
             final_msg = None
+            mcp_event_msg = None
             loop_tool_calling = True
             while loop_tool_calling:
                 request_params = {
@@ -395,6 +396,30 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
                             assistant_msgs.append(final_msg)
                         whole_response += event.delta
                         final_msg.content = whole_response
+                        yield assistant_msgs
+                    elif event.type in (
+                        "response.mcp_list_tools.in_progress",
+                        "response.mcp_call.in_progress",
+                    ):
+                        mcp_event_msg = gr.ChatMessage(
+                            role="assistant",
+                            content="",
+                            metadata={
+                                "title": event.type,
+                                "id": f"mcp-{getattr(event, 'sequence_number', '')}",
+                                "status": "pending",
+                            },
+                        )
+                        assistant_msgs.append(mcp_event_msg)
+                        yield assistant_msgs
+                    elif event.type in (
+                        "response.mcp_list_tools.completed",
+                        "response.mcp_list_tools.failed",
+                        "response.mcp_call.completed",
+                        "response.mcp_call.failed",
+                    ):
+                        if mcp_event_msg is not None:
+                            mcp_event_msg.metadata["status"] = "done"
                         yield assistant_msgs
                     elif event.type == "response.completed":
                         response = event.response
