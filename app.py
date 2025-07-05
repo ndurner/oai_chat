@@ -91,6 +91,32 @@ def encode_file(fn: str) -> list:
 
     return user_msg_parts
 
+def normalize_user_content(content) -> list:
+    """Convert chat history entries to OpenAI-style message parts."""
+    parts = []
+
+    if hasattr(content, "value"):
+        content = content.value
+
+    if isinstance(content, dict):
+        if "file" in content and isinstance(content["file"], dict) and content["file"].get("path"):
+            parts.extend(encode_file(content["file"]["path"]))
+        elif content.get("path"):
+            parts.extend(encode_file(content["path"]))
+        else:
+            parts.append({"type": "input_text", "text": str(content)})
+    elif isinstance(content, Image.Image):
+        buf = io.BytesIO()
+        fmt = content.format if content.format else "PNG"
+        content.save(buf, format=fmt)
+        parts.append({"type": "input_image", "image_url": encode_image(buf.getvalue())})
+    elif isinstance(content, tuple):
+        parts.extend(encode_file(content[0]))
+    else:
+        parts.append({"type": "input_text", "text": str(content)})
+
+    return parts
+
 def undo(history):
     history.pop()
     return history
@@ -263,45 +289,14 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
                 content = msg["content"]
 
                 if role == "user":
-                    val = None
-                    if hasattr(content, "value"):
-                        val = content.value
-                    elif isinstance(content, dict):
-                        if "file" in content and isinstance(content["file"], dict) and content["file"].get("path"):
-                            user_msg_parts.extend(encode_file(content["file"]["path"]))
-                            val = "__handled__"
-                        elif "path" in content:
-                            user_msg_parts.extend(encode_file(content["path"]))
-                            val = "__handled__"
-                    if val is None:
-                        if isinstance(content, Image.Image):
-                            buf = io.BytesIO()
-                            fmt = content.format if content.format else 'PNG'
-                            content.save(buf, format=fmt)
-                            user_msg_parts.append({"type": "input_image",
-                                                   "image_url": encode_image(buf.getvalue())})
-                        elif isinstance(content, tuple):
-                            user_msg_parts.extend(encode_file(content[0]))
-                        else:
-                            user_msg_parts.append({"type": "input_text", "text": content})
-                    elif val != "__handled__":
-                        if isinstance(val, dict) and val.get('path'):
-                            user_msg_parts.extend(encode_file(val['path']))
-                        elif isinstance(val, Image.Image):
-                            buf = io.BytesIO()
-                            fmt = val.format if val.format else 'PNG'
-                            val.save(buf, format=fmt)
-                            user_msg_parts.append({"type": "input_image",
-                                                   "image_url": encode_image(buf.getvalue())})
-                        else:
-                            user_msg_parts.append({"type": "input_text", "text": str(val)})
+                    user_msg_parts.extend(normalize_user_content(content))
 
                 if role == "assistant":
                     if user_msg_parts:
                         history_openai_format.append({"role": "user", "content": user_msg_parts})
                         user_msg_parts = []
 
-                    history_openai_format.append({"role": "assistant", "content": content})
+                    history_openai_format.append({"role": "assistant", "content": str(content)})
 
             for item in approval_items:
                 history_openai_format.append(item)
