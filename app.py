@@ -452,7 +452,9 @@ def import_history_guarded(oai_key, history, file):
         raise gr.Error(f"OpenAI login error: {str(e)}")
 
     # actual import
-    return import_history(history, file)
+    chat_history, system_prompt_value = import_history(history, file)
+
+    return chat_history, system_prompt_value, chat_history
 
 with gr.Blocks(delete_cache=(86400, 86400)) as demo:
     gr.Markdown("# OpenAI™️ Chat (Nils' Version™️)")
@@ -591,9 +593,9 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
                 }
             }
         """)
-        import_button.upload(import_history_guarded, 
-                            inputs=[oai_key, chatbot, import_button], 
-                            outputs=[chatbot, system_prompt])
+        import_button.upload(import_history_guarded,
+                            inputs=[oai_key, chatbot, import_button],
+                            outputs=[chatbot, system_prompt, chat.chatbot_state])
 
 demo.unload(lambda: [os.remove(file) for file in temp_files])
 demo.queue(default_concurrency_limit = None).launch()
