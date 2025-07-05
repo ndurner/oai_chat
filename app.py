@@ -57,6 +57,11 @@ approval_modal_js = """
 }
 """
 
+approval_modal_css = """
+#mcp_modal { display:none; position:fixed; z-index:1000; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); justify-content:center; align-items:center; }
+#mcp_modal_inner { background:white; padding:20px; border-radius:8px; max-width:90%; }
+"""
+
 def encode_image(image_data):
     """Generates a prefix for image base64 data in the required format for the
     four known image formats: png, jpeg, gif, and webp.
@@ -548,24 +553,25 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
         dl_settings_button.click(None, controls, js=generate_download_settings_js("oai_chat_settings.bin", control_ids))
         ul_settings_button.click(None, None, None, js=generate_upload_settings_js(control_ids))
 
-    modal = gr.HTML("""
-        <div id='mcp_modal' style='display:none; position:fixed; z-index:1000; top:0; left:0; width:100%; height:100%;
-             background:rgba(0,0,0,0.5); justify-content:center; align-items:center;'>
-          <div style='background:white; padding:20px; border-radius:8px; max-width:90%;'>
-            <div id='mcp_modal_text' style='white-space:pre-wrap;'></div>
-            <textarea id='mcp_modal_input' rows='2' style='width:100%; margin-top:10px;' placeholder='Optional reply'></textarea>
-            <div style='text-align:right; margin-top:10px;'>
-              <button id='mcp_modal_deny'>Deny</button>
-              <button id='mcp_modal_approve'>Approve</button>
-            </div>
-          </div>
-        </div>
-        """)
+    with gr.Box(elem_id="mcp_modal", visible=False):
+        with gr.Column(elem_id="mcp_modal_inner"):
+            gr.Markdown(elem_id="mcp_modal_text")
+            mcp_modal_input = gr.Textbox(lines=2, elem_id="mcp_modal_input", placeholder="Optional reply")
+            with gr.Row():
+                gr.Button("Deny", elem_id="mcp_modal_deny")
+                gr.Button("Approve", elem_id="mcp_modal_approve")
 
-    chat = gr.ChatInterface(fn=bot, multimodal=True, additional_inputs=controls, autofocus=False, type="messages",
-                            chatbot=gr.Chatbot(elem_id="chatbot", type="messages"),
-                            textbox=gr.MultimodalTextbox(elem_id="chat_input"),
-                            js=approval_modal_js)
+    chat = gr.ChatInterface(
+        fn=bot,
+        multimodal=True,
+        additional_inputs=controls,
+        autofocus=False,
+        type="messages",
+        chatbot=gr.Chatbot(elem_id="chatbot", type="messages"),
+        textbox=gr.MultimodalTextbox(elem_id="chat_input"),
+        js=approval_modal_js,
+        css=approval_modal_css,
+    )
     chat.textbox.file_count = "multiple"
     chat.textbox.max_plain_text_length = 2**31
     chatbot = chat.chatbot
