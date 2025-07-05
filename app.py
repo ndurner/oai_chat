@@ -303,7 +303,7 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
 
                     if not system_prompt.startswith("Formatting re-enabled"):
                         system_prompt = "Formatting re-enabled\n" + system_prompt
-                history_openai_format.append({"role": role, "content": system_prompt, "type": "message"})
+                history_openai_format.append({"role": role, "content": system_prompt})
 
             for msg in history:
                 role = msg.role if hasattr(msg, "role") else msg["role"]
@@ -314,10 +314,10 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
 
                 if role == "assistant":
                     if user_msg_parts:
-                        history_openai_format.append({"role": "user", "content": user_msg_parts, "type": "message"})
+                        history_openai_format.append({"role": "user", "content": user_msg_parts})
                         user_msg_parts = []
 
-                    history_openai_format.append({"role": "assistant", "content": str(content), "type": "message"})
+                    history_openai_format.append({"role": "assistant", "content": str(content)})
 
             for item in approval_items:
                 history_openai_format.append(item)
@@ -327,7 +327,7 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
             if message["files"]:
                 for file in message["files"]:
                     user_msg_parts.extend(encode_file(file))
-            history_openai_format.append({"role": "user", "content": user_msg_parts, "type": "message"})
+            history_openai_format.append({"role": "user", "content": user_msg_parts})
             user_msg_parts = []
 
             if log_to_console:
