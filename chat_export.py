@@ -3,7 +3,6 @@ import base64
 import os, io
 import mimetypes
 from PIL import Image
-import gradio as gr
 
 def import_history(history, file):
     if os.path.getsize(file.name) > 100e6:
@@ -32,28 +31,34 @@ def import_history(history, file):
                 if isinstance(content, list):
                     for item in content:
                         if item.get('type', '') == 'image_url':
-                            # Create gr.Image from data URI
-                            image_data = base64.b64decode(item['image_url']['url'].split(',')[1])
-                            img = Image.open(io.BytesIO(image_data))
+                            # Save image to a temporary file
+                            data_uri = item['image_url']['url']
+                            img_bytes = base64.b64decode(data_uri.split(',')[1])
+                            mime_type = data_uri.split(';')[0].split(':')[1]
+                            ext = mimetypes.guess_extension(mime_type) or '.png'
+                            fname = f"download{msg_num}{ext}"
+                            dir_path = os.path.dirname(file.name)
+                            temp_path = os.path.join(dir_path, fname)
+                            with open(temp_path, 'wb') as tempf:
+                                tempf.write(img_bytes)
                             chat_history.append({
                                 "role": msg['role'],
-                                "content": gr.Image(value=img)
+                                "content": {"path": temp_path}
                             })
                         elif item.get('type', '') == 'file':
-                            # Handle file content with gr.File
+                            # Handle file content
                             fname = os.path.basename(item['file'].get('name', f'download{msg_num}'))
                             dir_path = os.path.dirname(file.name)
                             temp_path = os.path.join(dir_path, fname)
                             file_data = base64.b64decode(item['file']['url'].split(',')[1])
                             if (len(file_data) > 15e6):
                                 raise ValueError(f"file content `{fname}` larger than 15 MB")
-                            
+
                             with open(temp_path, "wb") as tempf:
                                 tempf.write(file_data)
                             chat_history.append({
                                 "role": msg['role'],
-                                "content": gr.File(value=temp_path, 
-                                                 label=fname)
+                                "content": {"path": temp_path}
                             })
                         else:
                             chat_history.append(msg)
@@ -85,25 +90,21 @@ def import_history(history, file):
                         mime_type = file_data.split(';')[0].split(':')[1]
                         
                         if mime_type.startswith('image/'):
-                            image_data = base64.b64decode(file_data.split(',')[1])
-                            img = Image.open(io.BytesIO(image_data))
-                            chat_history.append({
-                                "role": "user",
-                                "content": gr.Image(value=img)
-                            })
+                            image_bytes = base64.b64decode(file_data.split(',')[1])
+                            ext = mimetypes.guess_extension(mime_type) or '.png'
+                            fname = f"download{msg_num}{ext}"
                         else:
                             fname = pair[0]['file'].get('name', 'download')
-                            dir_path = os.path.dirname(file.name)
-                            temp_path = os.path.join(dir_path, fname)
-                            file_data = base64.b64decode(file_data.split(',')[1])
-                            
-                            with open(temp_path, "wb") as tempf:
-                                tempf.write(file_data)
-                            chat_history.append({
-                                "role": "user",
-                                "content": gr.File(value=temp_path, 
-                                                 label=fname)
-                            })
+                            image_bytes = base64.b64decode(file_data.split(',')[1])
+
+                        dir_path = os.path.dirname(file.name)
+                        temp_path = os.path.join(dir_path, fname)
+                        with open(temp_path, 'wb') as tempf:
+                            tempf.write(image_bytes)
+                        chat_history.append({
+                            "role": "user",
+                            "content": {"path": temp_path}
+                        })
                     else:
                         # Keep as-is but convert to message format
                         chat_history.append({
