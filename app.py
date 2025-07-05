@@ -263,8 +263,26 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
                 content = msg["content"]
 
                 if role == "user":
-                    if isinstance(content, gr.File) or isinstance(content, gr.Image):
+                    if isinstance(content, gr.File):
                         user_msg_parts.extend(encode_file(content.value['path']))
+                    elif isinstance(content, gr.Image):
+                        val = content.value
+                        if isinstance(val, dict) and val.get('path'):
+                            user_msg_parts.extend(encode_file(val['path']))
+                        elif isinstance(val, Image.Image):
+                            buf = io.BytesIO()
+                            fmt = val.format if val.format else 'PNG'
+                            val.save(buf, format=fmt)
+                            user_msg_parts.append({"type": "input_image",
+                                                   "image_url": encode_image(buf.getvalue())})
+                        else:
+                            user_msg_parts.append({"type": "input_text", "text": str(val)})
+                    elif isinstance(content, Image.Image):
+                        buf = io.BytesIO()
+                        fmt = content.format if content.format else 'PNG'
+                        content.save(buf, format=fmt)
+                        user_msg_parts.append({"type": "input_image",
+                                               "image_url": encode_image(buf.getvalue())})
                     elif isinstance(content, tuple):
                         user_msg_parts.extend(encode_file(content[0]))
                     else:
