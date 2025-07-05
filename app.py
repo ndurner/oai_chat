@@ -16,7 +16,6 @@ from code_exec import eval_restricted_script
 dump_controls = False
 log_to_console = False
 
-temp_files = []
 mcp_servers = load_registry()
 pending_mcp_request = None
 
@@ -618,5 +617,4 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
                             inputs=[oai_key, chatbot, import_button],
                             outputs=[chatbot, system_prompt, chat.chatbot_state])
 
-demo.unload(lambda: [os.remove(file) for file in temp_files])
 demo.queue(default_concurrency_limit = None).launch()
