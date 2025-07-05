@@ -20,6 +20,43 @@ temp_files = []
 mcp_servers = load_registry()
 pending_mcp_request = None
 
+approval_modal_js = """
+() => {
+    window.oai_mcp_modal = {
+        show: (msg) => {
+            const modal = document.getElementById('mcp_modal');
+            if (!modal) return;
+            document.getElementById('mcp_modal_text').innerText = msg;
+            modal.style.display = 'flex';
+        },
+        hide: () => {
+            const modal = document.getElementById('mcp_modal');
+            if (!modal) return;
+            modal.style.display = 'none';
+            document.getElementById('mcp_modal_input').value = '';
+        },
+        approve: () => {
+            const txt = document.getElementById('mcp_modal_input').value;
+            const tb = document.querySelector('#chat_input textarea');
+            tb.value = 'y ' + txt;
+            tb.dispatchEvent(new Event('input', {bubbles: true}));
+            window.oai_mcp_modal.hide();
+            document.querySelector('#chat_input button').click();
+        },
+        deny: () => {
+            const txt = document.getElementById('mcp_modal_input').value;
+            const tb = document.querySelector('#chat_input textarea');
+            tb.value = 'n ' + txt;
+            tb.dispatchEvent(new Event('input', {bubbles: true}));
+            window.oai_mcp_modal.hide();
+            document.querySelector('#chat_input button').click();
+        }
+    };
+    document.getElementById('mcp_modal_approve').onclick = window.oai_mcp_modal.approve;
+    document.getElementById('mcp_modal_deny').onclick = window.oai_mcp_modal.deny;
+}
+"""
+
 def encode_image(image_data):
     """Generates a prefix for image base64 data in the required format for the
     four known image formats: png, jpeg, gif, and webp.
@@ -133,7 +170,7 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
         if pending_mcp_request:
             txt = (message.get("text", "") or "").strip()
             if not txt:
-                raise gr.Error("MCP tool call awaiting confirmation. Reply with 'y' to approve or 'n' to deny, optionally followed by your message.")
+                raise gr.Error("MCP tool call awaiting confirmation. Use the dialog to approve or deny, optionally adding a message.")
             flag = txt[0].lower()
             if flag == 'y':
                 approve = True
@@ -421,8 +458,7 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
                             elif output.type == "mcp_approval_request":
                                 pending_mcp_request = _event_to_dict(output)
                                 whole_response += (f"\nMCP approval needed for {output.name}"
-                                                 f" on {output.server_label} with arguments {output.arguments}."
-                                                 " Reply with 'y' to approve or 'n' to deny.")
+                                                 f" on {output.server_label} with arguments {output.arguments}.")
                                 yield whole_response
                                 return
                             elif output.type == "mcp_call":
@@ -512,12 +548,39 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
         dl_settings_button.click(None, controls, js=generate_download_settings_js("oai_chat_settings.bin", control_ids))
         ul_settings_button.click(None, None, None, js=generate_upload_settings_js(control_ids))
 
-    chat = gr.ChatInterface(fn=bot, multimodal=True, additional_inputs=controls, autofocus = False, type = "messages")
+    modal = gr.HTML("""
+        <div id='mcp_modal' style='display:none; position:fixed; z-index:1000; top:0; left:0; width:100%; height:100%;
+             background:rgba(0,0,0,0.5); justify-content:center; align-items:center;'>
+          <div style='background:white; padding:20px; border-radius:8px; max-width:90%;'>
+            <div id='mcp_modal_text' style='white-space:pre-wrap;'></div>
+            <textarea id='mcp_modal_input' rows='2' style='width:100%; margin-top:10px;' placeholder='Optional reply'></textarea>
+            <div style='text-align:right; margin-top:10px;'>
+              <button id='mcp_modal_deny'>Deny</button>
+              <button id='mcp_modal_approve'>Approve</button>
+            </div>
+          </div>
+        </div>
+        """)
+
+    chat = gr.ChatInterface(fn=bot, multimodal=True, additional_inputs=controls, autofocus=False, type="messages",
+                            chatbot=gr.Chatbot(elem_id="chatbot", type="messages"),
+                            textbox=gr.MultimodalTextbox(elem_id="chat_input"),
+                            js=approval_modal_js)
     chat.textbox.file_count = "multiple"
     chat.textbox.max_plain_text_length = 2**31
     chatbot = chat.chatbot
     chatbot.show_copy_button = True
     chatbot.height = 450
+    chatbot.change(js="""
+        (hist) => {
+            if (hist && hist.length > 0) {
+                let last = hist[hist.length - 1];
+                if (last.role === 'assistant' && typeof last.content === 'string' && last.content.includes('MCP approval needed for')) {
+                    window.oai_mcp_modal.show(last.content);
+                }
+            }
+        }
+    """)
 
     if dump_controls:
         with gr.Row():

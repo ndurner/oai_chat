@@ -33,5 +33,5 @@ The MCP registry is looked up in the following order:
 See `mcp_registry.sample.json` for an example configuration.
 Headers and query parameters may reference environment variables using the `env:` prefix.
 Use `"allowed_tools": ["*"]` to permit all tools from a server.
-When an MCP tool requires approval, the assistant will ask for confirmation.
-Reply with `y` to approve or `n` to deny before continuing your message.
+When an MCP tool requires approval, a dialog will pop up requesting confirmation.
+Use the Approve or Deny buttons before continuing.
