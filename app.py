@@ -8,6 +8,7 @@ import io
 from settings_mgr import generate_download_settings_js, generate_upload_settings_js
 from chat_export import import_history, get_export_js
 from mcp_registry import load_registry, to_openai_tool
+from gradio.components.base import Component
 from types import SimpleNamespace
 
 from doc2json import process_docx
@@ -94,7 +95,10 @@ def normalize_user_content(content) -> list:
     """Convert chat history entries to OpenAI-style message parts."""
     parts = []
 
-    if hasattr(content, "value"):
+    if hasattr(content, "model_dump"):
+        content = content.model_dump()
+
+    if isinstance(content, Component) and hasattr(content, "value"):
         content = content.value
 
     if isinstance(content, dict):
