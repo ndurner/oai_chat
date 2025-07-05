@@ -1,9 +1,9 @@
 import json
 import base64
 import os, io
-import mimetypes
 from PIL import Image
 import gradio as gr
+from gradio import processing_utils, utils
 
 def import_history(history, file):
     if os.path.getsize(file.name) > 100e6:
@@ -32,28 +32,24 @@ def import_history(history, file):
                 if isinstance(content, list):
                     for item in content:
                         if item.get('type', '') == 'image_url':
-                            # Create gr.Image from data URI
-                            image_data = base64.b64decode(item['image_url']['url'].split(',')[1])
-                            img = Image.open(io.BytesIO(image_data))
+                            data_uri = item['image_url']['url']
+                            img_bytes = base64.b64decode(data_uri.split(',')[1])
+                            fname = f"img{msg_num}.webp"
+                            cache_path = processing_utils.save_bytes_to_cache(img_bytes, fname, utils.get_upload_folder())
                             chat_history.append({
                                 "role": msg['role'],
-                                "content": gr.Image(value=img)
+                                "content": {"path": cache_path}
                             })
                         elif item.get('type', '') == 'file':
-                            # Handle file content with gr.File
                             fname = os.path.basename(item['file'].get('name', f'download{msg_num}'))
-                            dir_path = os.path.dirname(file.name)
-                            temp_path = os.path.join(dir_path, fname)
                             file_data = base64.b64decode(item['file']['url'].split(',')[1])
                             if (len(file_data) > 15e6):
                                 raise ValueError(f"file content `{fname}` larger than 15 MB")
-                            
-                            with open(temp_path, "wb") as tempf:
-                                tempf.write(file_data)
+
+                            cache_path = processing_utils.save_bytes_to_cache(file_data, fname, utils.get_upload_folder())
                             chat_history.append({
                                 "role": msg['role'],
-                                "content": gr.File(value=temp_path, 
-                                                 label=fname)
+                                "content": {"path": cache_path}
                             })
                         else:
                             chat_history.append(msg)
@@ -85,24 +81,20 @@ def import_history(history, file):
                         mime_type = file_data.split(';')[0].split(':')[1]
                         
                         if mime_type.startswith('image/'):
-                            image_data = base64.b64decode(file_data.split(',')[1])
-                            img = Image.open(io.BytesIO(image_data))
+                            image_bytes = base64.b64decode(file_data.split(',')[1])
+                            fname = 'legacy_img.webp'
+                            cache_path = processing_utils.save_bytes_to_cache(image_bytes, fname, utils.get_upload_folder())
                             chat_history.append({
                                 "role": "user",
-                                "content": gr.Image(value=img)
+                                "content": {"path": cache_path}
                             })
                         else:
                             fname = pair[0]['file'].get('name', 'download')
-                            dir_path = os.path.dirname(file.name)
-                            temp_path = os.path.join(dir_path, fname)
-                            file_data = base64.b64decode(file_data.split(',')[1])
-                            
-                            with open(temp_path, "wb") as tempf:
-                                tempf.write(file_data)
+                            file_bytes = base64.b64decode(file_data.split(',')[1])
+                            cache_path = processing_utils.save_bytes_to_cache(file_bytes, fname, utils.get_upload_folder())
                             chat_history.append({
                                 "role": "user",
-                                "content": gr.File(value=temp_path, 
-                                                 label=fname)
+                                "content": {"path": cache_path}
                             })
                     else:
                         # Keep as-is but convert to message format

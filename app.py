@@ -8,6 +8,7 @@ import io
 from settings_mgr import generate_download_settings_js, generate_upload_settings_js
 from chat_export import import_history, get_export_js
 from mcp_registry import load_registry, to_openai_tool
+from gradio.components.base import Component
 from types import SimpleNamespace
 
 from doc2json import process_docx
@@ -16,7 +17,6 @@ from code_exec import eval_restricted_script
 dump_controls = False
 log_to_console = False
 
-temp_files = []
 mcp_servers = load_registry()
 pending_mcp_request = None
 
@@ -90,6 +90,52 @@ def encode_file(fn: str) -> list:
             user_msg_parts.append({"type": "input_text", "text": f"```{fn}\n{content}\n```"})
 
     return user_msg_parts
+
+def normalize_user_content(content) -> list:
+    """Convert chat history entries to OpenAI-style message parts."""
+    parts = []
+
+    if hasattr(content, "model_dump"):
+        content = content.model_dump()
+
+    if isinstance(content, Component):
+        val = getattr(content, "value", None)
+        if val is None and hasattr(content, "constructor_args"):
+            ca = content.constructor_args
+            if isinstance(ca, dict):
+                val = ca.get("value")
+            elif isinstance(ca, list):
+                for entry in ca:
+                    if isinstance(entry, dict) and "value" in entry:
+                        val = entry["value"]
+                        break
+        if val is not None:
+            content = val
+
+    if isinstance(content, dict):
+        if "file" in content and isinstance(content["file"], dict) and content["file"].get("path"):
+            parts.extend(encode_file(content["file"]["path"]))
+        elif content.get("path"):
+            parts.extend(encode_file(content["path"]))
+        elif content.get("component"):
+            val = content.get("value") or content.get("constructor_args", {}).get("value")
+            if isinstance(val, dict) and val.get("path"):
+                parts.extend(encode_file(val["path"]))
+            else:
+                parts.append({"type": "input_text", "text": str(content)})
+        else:
+            parts.append({"type": "input_text", "text": str(content)})
+    elif isinstance(content, Image.Image):
+        buf = io.BytesIO()
+        fmt = content.format if content.format else "PNG"
+        content.save(buf, format=fmt)
+        parts.append({"type": "input_image", "image_url": encode_image(buf.getvalue())})
+    elif isinstance(content, tuple):
+        parts.extend(encode_file(content[0]))
+    else:
+        parts.append({"type": "input_text", "text": str(content)})
+
+    return parts
 
 def undo(history):
     history.pop()
@@ -263,19 +309,14 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
                 content = msg["content"]
 
                 if role == "user":
-                    if isinstance(content, gr.File) or isinstance(content, gr.Image):
-                        user_msg_parts.extend(encode_file(content.value['path']))
-                    elif isinstance(content, tuple):
-                        user_msg_parts.extend(encode_file(content[0]))
-                    else:
-                        user_msg_parts.append({"type": "input_text", "text": content})
+                    user_msg_parts.extend(normalize_user_content(content))
 
                 if role == "assistant":
                     if user_msg_parts:
                         history_openai_format.append({"role": "user", "content": user_msg_parts})
                         user_msg_parts = []
 
-                    history_openai_format.append({"role": "assistant", "content": content})
+                    history_openai_format.append({"role": "assistant", "content": str(content)})
 
             for item in approval_items:
                 history_openai_format.append(item)
@@ -452,7 +493,9 @@ def import_history_guarded(oai_key, history, file):
         raise gr.Error(f"OpenAI login error: {str(e)}")
 
     # actual import
-    return import_history(history, file)
+    chat_history, system_prompt_value = import_history(history, file)
+
+    return chat_history, system_prompt_value, chat_history
 
 with gr.Blocks(delete_cache=(86400, 86400)) as demo:
     gr.Markdown("# OpenAI™️ Chat (Nils' Version™️)")
@@ -591,9 +634,8 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
                 }
             }
         """)
-        import_button.upload(import_history_guarded, 
-                            inputs=[oai_key, chatbot, import_button], 
-                            outputs=[chatbot, system_prompt])
+        import_button.upload(import_history_guarded,
+                            inputs=[oai_key, chatbot, import_button],
+                            outputs=[chatbot, system_prompt, chat.chatbot_state])
 
-demo.unload(lambda: [os.remove(file) for file in temp_files])
 demo.queue(default_concurrency_limit = None).launch()
