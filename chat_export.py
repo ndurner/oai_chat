@@ -34,10 +34,11 @@ def import_history(history, file):
                         if item.get('type', '') == 'image_url':
                             data_uri = item['image_url']['url']
                             img_bytes = base64.b64decode(data_uri.split(',')[1])
-                            img = Image.open(io.BytesIO(img_bytes))
+                            fname = f"img{msg_num}.webp"
+                            cache_path = processing_utils.save_bytes_to_cache(img_bytes, fname, utils.get_upload_folder())
                             chat_history.append({
                                 "role": msg['role'],
-                                "content": gr.Image(value=img, type="pil")
+                                "content": {"path": cache_path}
                             })
                         elif item.get('type', '') == 'file':
                             fname = os.path.basename(item['file'].get('name', f'download{msg_num}'))
@@ -81,10 +82,11 @@ def import_history(history, file):
                         
                         if mime_type.startswith('image/'):
                             image_bytes = base64.b64decode(file_data.split(',')[1])
-                            img = Image.open(io.BytesIO(image_bytes))
+                            fname = 'legacy_img.webp'
+                            cache_path = processing_utils.save_bytes_to_cache(image_bytes, fname, utils.get_upload_folder())
                             chat_history.append({
                                 "role": "user",
-                                "content": gr.Image(value=img, type="pil")
+                                "content": {"path": cache_path}
                             })
                         else:
                             fname = pair[0]['file'].get('name', 'download')

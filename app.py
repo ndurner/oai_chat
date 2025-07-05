@@ -98,14 +98,31 @@ def normalize_user_content(content) -> list:
     if hasattr(content, "model_dump"):
         content = content.model_dump()
 
-    if isinstance(content, Component) and hasattr(content, "value"):
-        content = content.value
+    if isinstance(content, Component):
+        val = getattr(content, "value", None)
+        if val is None and hasattr(content, "constructor_args"):
+            ca = content.constructor_args
+            if isinstance(ca, dict):
+                val = ca.get("value")
+            elif isinstance(ca, list):
+                for entry in ca:
+                    if isinstance(entry, dict) and "value" in entry:
+                        val = entry["value"]
+                        break
+        if val is not None:
+            content = val
 
     if isinstance(content, dict):
         if "file" in content and isinstance(content["file"], dict) and content["file"].get("path"):
             parts.extend(encode_file(content["file"]["path"]))
         elif content.get("path"):
             parts.extend(encode_file(content["path"]))
+        elif content.get("component"):
+            val = content.get("value") or content.get("constructor_args", {}).get("value")
+            if isinstance(val, dict) and val.get("path"):
+                parts.extend(encode_file(val["path"]))
+            else:
+                parts.append({"type": "input_text", "text": str(content)})
         else:
             parts.append({"type": "input_text", "text": str(content)})
     elif isinstance(content, Image.Image):
