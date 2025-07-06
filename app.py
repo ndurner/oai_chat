@@ -13,7 +13,7 @@ from gradio.components.base import Component
 from types import SimpleNamespace
 
 from doc2json import process_docx
-from code_exec import eval_restricted_script
+from code_exec import eval_script
 
 dump_controls = False
 log_to_console = False
@@ -500,7 +500,7 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
                                         )
                                         yield assistant_msgs
 
-                                        tool_result = eval_restricted_script(tool_script)
+                                        tool_result = eval_script(tool_script)
                                         result_text = (
                                             tool_result["prints"]
                                             if tool_result["success"]

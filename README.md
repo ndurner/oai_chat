@@ -24,6 +24,7 @@ Features:
 * streaming chat
 * image generation (via DALL-E 3)
 * remote MCP server support via configurable registry
+* optional UnrestrictedPython execution when `CODE_EXEC_UNRESTRICTED_PYTHON=1`
 
 The MCP registry is looked up in the following order:
 1. `$OAI_CHAT_MCP_REGISTRY` if set
