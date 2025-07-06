@@ -185,7 +185,7 @@ def process_values_js():
     }
     """
 
-def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model, python_use, web_search, *mcp_selected):
+def bot(message, history, openai_responses_outputs, oai_key, system_prompt, temperature, max_tokens, model, python_use, web_search, *mcp_selected):
     global pending_mcp_request
     try:
         client = OpenAI(
@@ -309,39 +309,40 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
             if log_to_console:
                 print(f"bot history: {str(history)}")
 
-            history_openai_format = []
+            history_openai_format = list(openai_responses_outputs)
             user_msg_parts = []
 
-            if system_prompt:
-                if not model.startswith("o"):
-                    role = "system"
-                else:
-                    role = "developer"
+            if not history_openai_format:
+                if system_prompt:
+                    if not model.startswith("o"):
+                        role = "system"
+                    else:
+                        role = "developer"
 
-                    if not system_prompt.startswith("Formatting re-enabled"):
-                        system_prompt = "Formatting re-enabled\n" + system_prompt
-                history_openai_format.append({"role": role, "content": system_prompt})
+                        if not system_prompt.startswith("Formatting re-enabled"):
+                            system_prompt = "Formatting re-enabled\n" + system_prompt
+                    history_openai_format.append({"role": role, "content": system_prompt})
 
-            for msg in history:
-                role = msg.role if hasattr(msg, "role") else msg["role"]
-                content = msg.content if hasattr(msg, "content") else msg["content"]
+                for msg in history:
+                    role = msg.role if hasattr(msg, "role") else msg["role"]
+                    content = msg.content if hasattr(msg, "content") else msg["content"]
 
-                if role == "user":
-                    user_msg_parts.extend(normalize_user_content(content))
+                    if role == "user":
+                        user_msg_parts.extend(normalize_user_content(content))
 
-                if role == "assistant":
-                    if user_msg_parts:
-                        history_openai_format.append({"role": "user", "content": user_msg_parts})
-                        user_msg_parts = []
+                    if role == "assistant":
+                        if user_msg_parts:
+                            history_openai_format.append({"role": "user", "content": user_msg_parts})
+                            user_msg_parts = []
 
-                    history_openai_format.append({"role": "assistant", "content": str(content)})
+                        history_openai_format.append({"role": "assistant", "content": str(content)})
 
             for item in approval_items:
                 history_openai_format.append(item)
 
             if message["text"]:
                 user_msg_parts.append({"type": "input_text", "text": message["text"]})
-            if message["files"]:
+            if message.get("files"):
                 for file in message["files"]:
                     user_msg_parts.extend(encode_file(file))
             history_openai_format.append({"role": "user", "content": user_msg_parts})
@@ -574,6 +575,13 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
                                     )
                                     yield assistant_msgs
 
+                        openai_responses_outputs.clear()
+                        openai_responses_outputs.extend(
+                            _event_to_dict(o) if not isinstance(o, dict) else o
+                            for o in outputs
+                        )
+                        yield assistant_msgs
+
                         if log_to_console:
                             print(f"usage: {event.usage}")
                     elif event.type == "response.incomplete":
@@ -656,6 +664,7 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
                        ('max_tokens', '#max_tokens input'),
                        ('model', '#model')]
         controls = [oai_key, system_prompt, temp, max_tokens, model, python_use, web_search] + mcp_boxes
+        openai_responses_outputs = gr.State([])
 
         dl_settings_button.click(None, controls, js=generate_download_settings_js("oai_chat_settings.bin", control_ids))
         ul_settings_button.click(None, None, None, js=generate_upload_settings_js(control_ids))
@@ -663,7 +672,7 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
     chat = gr.ChatInterface(
         fn=bot,
         multimodal=True,
-        additional_inputs=controls,
+        additional_inputs=[openai_responses_outputs] + controls,
         autofocus=False,
         type="messages",
         chatbot=gr.Chatbot(elem_id="chatbot", type="messages"),
