@@ -414,7 +414,7 @@ def bot(message, history, openai_responses_outputs, oai_key, system_prompt, temp
                             assistant_msgs.append(final_msg)
                         whole_response += event.delta
                         final_msg.content = whole_response
-                        yield assistant_msgs
+                        yield assistant_msgs, openai_responses_outputs
                     elif event.type in (
                         "response.mcp_list_tools.in_progress",
                         "response.mcp_call.in_progress",
@@ -429,7 +429,7 @@ def bot(message, history, openai_responses_outputs, oai_key, system_prompt, temp
                             },
                         )
                         assistant_msgs.append(mcp_event_msg)
-                        yield assistant_msgs
+                        yield assistant_msgs, openai_responses_outputs
                     elif event.type in (
                         "response.mcp_list_tools.completed",
                         "response.mcp_list_tools.failed",
@@ -438,7 +438,7 @@ def bot(message, history, openai_responses_outputs, oai_key, system_prompt, temp
                     ):
                         if mcp_event_msg is not None:
                             mcp_event_msg.metadata["status"] = "done"
-                        yield assistant_msgs
+                        yield assistant_msgs, openai_responses_outputs
                     elif event.type == "response.completed":
                         response = event.response
                         outputs = response.output
@@ -453,7 +453,7 @@ def bot(message, history, openai_responses_outputs, oai_key, system_prompt, temp
                                                 assistant_msgs.append(final_msg)
                                             whole_response += part.text
                                             final_msg.content = whole_response
-                                            yield assistant_msgs
+                                            yield assistant_msgs, openai_responses_outputs
 
                                         anns = part.annotations
                                         if anns:
@@ -470,7 +470,7 @@ def bot(message, history, openai_responses_outputs, oai_key, system_prompt, temp
                                                     final_msg = gr.ChatMessage(role="assistant", content="")
                                                     assistant_msgs.append(final_msg)
                                                 final_msg.content = whole_response
-                                                yield assistant_msgs
+                                                yield assistant_msgs, openai_responses_outputs
 
                             elif output.type == "function_call":
                                 if output.name == "eval_python":
@@ -499,7 +499,7 @@ def bot(message, history, openai_responses_outputs, oai_key, system_prompt, temp
                                                 metadata={"title": "request", "parent_id": call_id},
                                             )
                                         )
-                                        yield assistant_msgs
+                                        yield assistant_msgs, openai_responses_outputs
 
                                         tool_result = eval_restricted_script(tool_script)
                                         result_text = (
@@ -516,7 +516,7 @@ def bot(message, history, openai_responses_outputs, oai_key, system_prompt, temp
                                             )
                                         )
                                         parent_msg.metadata["status"] = "done"
-                                        yield assistant_msgs
+                                        yield assistant_msgs, openai_responses_outputs
 
                                         history_openai_format.append(
                                             {
@@ -545,7 +545,7 @@ def bot(message, history, openai_responses_outputs, oai_key, system_prompt, temp
                                             )
                                         )
                                         parent_msg.metadata["status"] = "done"
-                                        yield assistant_msgs
+                                        yield assistant_msgs, openai_responses_outputs
                                 else:
                                         history_openai_format.append(outputs)
 
@@ -561,7 +561,7 @@ def bot(message, history, openai_responses_outputs, oai_key, system_prompt, temp
                                         options=[{"value": "y", "label": "Yes"}, {"value": "n", "label": "No"}],
                                     )
                                 )
-                                yield assistant_msgs
+                                yield assistant_msgs, openai_responses_outputs
                                 return
                             elif output.type == "mcp_call":
                                 history_openai_format.append(_event_to_dict(output))
@@ -573,14 +573,11 @@ def bot(message, history, openai_responses_outputs, oai_key, system_prompt, temp
                                             metadata={"title": "response"},
                                         )
                                     )
-                                    yield assistant_msgs
+                                    yield assistant_msgs, openai_responses_outputs
 
                         openai_responses_outputs.clear()
-                        openai_responses_outputs.extend(
-                            _event_to_dict(o) if not isinstance(o, dict) else o
-                            for o in outputs
-                        )
-                        yield assistant_msgs
+                        openai_responses_outputs.extend(outputs)
+                        yield assistant_msgs, openai_responses_outputs
 
                         if log_to_console:
                             print(f"usage: {event.usage}")
@@ -590,7 +587,7 @@ def bot(message, history, openai_responses_outputs, oai_key, system_prompt, temp
                             final_msg = gr.ChatMessage(role="assistant", content="")
                             assistant_msgs.append(final_msg)
                         final_msg.content = whole_response
-                        yield assistant_msgs
+                        yield assistant_msgs, openai_responses_outputs
 
         if log_to_console:
             print(f"br_result: {str(history)}")
@@ -609,7 +606,7 @@ def import_history_guarded(oai_key, history, file):
     # actual import
     chat_history, system_prompt_value = import_history(history, file)
 
-    return chat_history, system_prompt_value, chat_history
+    return chat_history, system_prompt_value, chat_history, []
 
 with gr.Blocks(delete_cache=(86400, 86400)) as demo:
     gr.Markdown("# OpenAI™️ Chat (Nils' Version™️)")
@@ -673,6 +670,7 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
         fn=bot,
         multimodal=True,
         additional_inputs=[openai_responses_outputs] + controls,
+        additional_outputs=openai_responses_outputs,
         autofocus=False,
         type="messages",
         chatbot=gr.Chatbot(elem_id="chatbot", type="messages"),
@@ -749,8 +747,10 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
                 }
             }
         """)
-        import_button.upload(import_history_guarded,
-                            inputs=[oai_key, chatbot, import_button],
-                            outputs=[chatbot, system_prompt, chat.chatbot_state])
+        import_button.upload(
+            import_history_guarded,
+            inputs=[oai_key, chatbot, import_button],
+            outputs=[chatbot, system_prompt, chat.chatbot_state, openai_responses_outputs],
+        )
 
 demo.queue(default_concurrency_limit = None).launch()
