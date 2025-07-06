@@ -200,13 +200,14 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
             result = ""
             whisper_prompt = system_prompt
             for msg in history:
-                content = msg["content"]
-                if msg["role"] == "user":
+                role = msg.role if hasattr(msg, "role") else msg["role"]
+                content = msg.content if hasattr(msg, "content") else msg["content"]
+                if role == "user":
                     if type(content) is tuple:
                         pass
                     else:
                         whisper_prompt += f"\n{content}"
-                if msg["role"] == "assistant":
+                if role == "assistant":
                         whisper_prompt += f"\n{content}"
 
             if message["text"]:
@@ -224,7 +225,7 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
                     whisper_prompt += f"\n{transcription}"
                     result += f"\n``` transcript {audio_fn}\n {transcription}\n```"
             
-            yield result
+            yield gr.ChatMessage(role="assistant", content=result)
 
         elif model == "gpt-image-1":
             if message.get("files"):
@@ -305,8 +306,8 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
                 history_openai_format.append({"role": role, "content": system_prompt})
 
             for msg in history:
-                role = msg["role"]
-                content = msg["content"]
+                role = msg.role if hasattr(msg, "role") else msg["role"]
+                content = msg.content if hasattr(msg, "content") else msg["content"]
 
                 if role == "user":
                     user_msg_parts.extend(normalize_user_content(content))
@@ -356,7 +357,10 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
             else:
                 reasoner = False
 
+            assistant_msgs = []
             whole_response = ""
+            final_msg = None
+            mcp_event_msg = None
             loop_tool_calling = True
             while loop_tool_calling:
                 request_params = {
@@ -387,8 +391,36 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
                 loop_tool_calling = False
                 for event in stream:
                     if event.type == "response.output_text.delta":
+                        if final_msg is None:
+                            final_msg = gr.ChatMessage(role="assistant", content="")
+                            assistant_msgs.append(final_msg)
                         whole_response += event.delta
-                        yield whole_response
+                        final_msg.content = whole_response
+                        yield assistant_msgs
+                    elif event.type in (
+                        "response.mcp_list_tools.in_progress",
+                        "response.mcp_call.in_progress",
+                    ):
+                        mcp_event_msg = gr.ChatMessage(
+                            role="assistant",
+                            content="",
+                            metadata={
+                                "title": event.type,
+                                "id": f"mcp-{getattr(event, 'sequence_number', '')}",
+                                "status": "pending",
+                            },
+                        )
+                        assistant_msgs.append(mcp_event_msg)
+                        yield assistant_msgs
+                    elif event.type in (
+                        "response.mcp_list_tools.completed",
+                        "response.mcp_list_tools.failed",
+                        "response.mcp_call.completed",
+                        "response.mcp_call.failed",
+                    ):
+                        if mcp_event_msg is not None:
+                            mcp_event_msg.metadata["status"] = "done"
+                        yield assistant_msgs
                     elif event.type == "response.completed":
                         response = event.response
                         outputs = response.output
@@ -398,9 +430,12 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
                                 for part in output.content:
                                     if part.type == "output_text":
                                         if not have_stream:
-                                            # response text was not collected through streaming events, so get it here
+                                            if final_msg is None:
+                                                final_msg = gr.ChatMessage(role="assistant", content="")
+                                                assistant_msgs.append(final_msg)
                                             whole_response += part.text
-                                            yield whole_response
+                                            final_msg.content = whole_response
+                                            yield assistant_msgs
 
                                         anns = part.annotations
                                         if anns:
@@ -413,7 +448,11 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
                                             if link_lines:
                                                 link_lines = list(dict.fromkeys(link_lines))
                                                 whole_response += "\n\n**Citations:**\n" + "\n".join(link_lines)
-                                                yield whole_response
+                                                if final_msg is None:
+                                                    final_msg = gr.ChatMessage(role="assistant", content="")
+                                                    assistant_msgs.append(final_msg)
+                                                final_msg.content = whole_response
+                                                yield assistant_msgs
 
                             elif output.type == "function_call":
                                 if output.name == "eval_python":
@@ -427,20 +466,47 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
 
                                         parsed_args = json.loads(output.arguments)
                                         tool_script = parsed_args.get("python_source_code", "")
+                                        call_id = output.call_id
 
-                                        whole_response += f"\n``` script\n{tool_script}\n```\n"
-                                        yield whole_response
+                                        parent_msg = gr.ChatMessage(
+                                            role="assistant",
+                                            content="",
+                                            metadata={"title": output.name, "id": call_id, "status": "pending"},
+                                        )
+                                        assistant_msgs.append(parent_msg)
+                                        assistant_msgs.append(
+                                            gr.ChatMessage(
+                                                role="assistant",
+                                                content=f"``` script\n{tool_script}\n```",
+                                                metadata={"title": "request", "parent_id": call_id},
+                                            )
+                                        )
+                                        yield assistant_msgs
 
                                         tool_result = eval_restricted_script(tool_script)
+                                        result_text = (
+                                            tool_result["prints"]
+                                            if tool_result["success"]
+                                            else tool_result.get("error", "")
+                                        )
 
-                                        whole_response += f"\n``` result\n{tool_result if not tool_result['success'] else tool_result['prints']}\n```\n"
-                                        yield whole_response
+                                        assistant_msgs.append(
+                                            gr.ChatMessage(
+                                                role="assistant",
+                                                content=f"``` result\n{result_text}\n```",
+                                                metadata={"title": "response", "parent_id": call_id, "status": "done"},
+                                            )
+                                        )
+                                        parent_msg.metadata["status"] = "done"
+                                        yield assistant_msgs
 
-                                        history_openai_format.append({
-                                            "type": "function_call_output",
-                                            "call_id": output.call_id,
-                                            "output": json.dumps(tool_result)
-                                        })
+                                        history_openai_format.append(
+                                            {
+                                                "type": "function_call_output",
+                                                "call_id": output.call_id,
+                                                "output": json.dumps(tool_result),
+                                            }
+                                        )
                                     except Exception as e:
                                         history_openai_format.append({
                                             "type": "function_call_output",
@@ -453,30 +519,54 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
                                             }
                                         })
 
-                                        whole_response += f"\n``` error\n{e.args[0]}\n```\n"
-                                        yield whole_response
+                                        assistant_msgs.append(
+                                            gr.ChatMessage(
+                                                role="assistant",
+                                                content=f"``` error\n{e.args[0]}\n```",
+                                                metadata={"title": "response", "parent_id": call_id, "status": "done"},
+                                            )
+                                        )
+                                        parent_msg.metadata["status"] = "done"
+                                        yield assistant_msgs
                                 else:
                                         history_openai_format.append(outputs)
 
                                 loop_tool_calling = True
                             elif output.type == "mcp_approval_request":
                                 pending_mcp_request = _event_to_dict(output)
-                                whole_response += (f"\nMCP approval needed for {output.name}"
-                                                 f" on {output.server_label} with arguments {output.arguments}.")
-                                yield whole_response
+                                assistant_msgs.append(
+                                    gr.ChatMessage(
+                                        role="assistant",
+                                        content=(
+                                            f"MCP approval needed for {output.name} on {output.server_label} with arguments {output.arguments}."
+                                        ),
+                                        options=[{"value": "y", "label": "Yes"}, {"value": "n", "label": "No"}],
+                                    )
+                                )
+                                yield assistant_msgs
                                 return
                             elif output.type == "mcp_call":
                                 history_openai_format.append(_event_to_dict(output))
                                 if getattr(output, "output", None) is not None:
-                                    whole_response += f"\n``` mcp_result\n{output.output}\n```\n"
-                                    yield whole_response
+                                    assistant_msgs.append(
+                                        gr.ChatMessage(
+                                            role="assistant",
+                                            content=f"``` mcp_result\n{output.output}\n```",
+                                            metadata={"title": "response"},
+                                        )
+                                    )
+                                    yield assistant_msgs
                                 loop_tool_calling = True
-                        
+
                         if log_to_console:
                             print(f"usage: {event.usage}")
                     elif event.type == "response.incomplete":
                         gr.Warning(f"Incomplete response, reason: {event.response.incomplete_details.reason}")
-                        yield whole_response
+                        if final_msg is None:
+                            final_msg = gr.ChatMessage(role="assistant", content="")
+                            assistant_msgs.append(final_msg)
+                        final_msg.content = whole_response
+                        yield assistant_msgs
 
         if log_to_console:
             print(f"br_result: {str(history)}")

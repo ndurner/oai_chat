@@ -1,5 +1,5 @@
 pydantic == 2.10.6
-gradio == 5.7.1
+gradio == 5.35.0
 openai == 1.76.0
 lxml
 RestrictedPython
