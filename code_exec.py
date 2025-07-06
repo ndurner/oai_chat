@@ -1,9 +1,15 @@
 from RestrictedPython import compile_restricted
 from RestrictedPython.PrintCollector import PrintCollector
-from RestrictedPython.Guards import safe_globals, safe_builtins, guarded_iter_unpack_sequence
+from RestrictedPython.Guards import (
+    safe_globals,
+    safe_builtins,
+    guarded_iter_unpack_sequence,
+    guarded_unpack_sequence,
+    safer_getattr,
+    full_write_guard,
+)
 from RestrictedPython.Eval import default_guarded_getiter, default_guarded_getitem
 from RestrictedPython.Utilities import utility_builtins
-from RestrictedPython.Guards import guarded_unpack_sequence
 from RestrictedPython.Limits import limited_range, limited_list, limited_tuple
 from io import StringIO
 import types
@@ -41,14 +47,14 @@ def eval_restricted_script(script):
     restricted_builtins.update({
         # Print handling
         '_print_': CustomPrintCollector,
-        '_getattr_': getattr,
+        '_getattr_': safer_getattr,
         '_getitem_': default_guarded_getitem,
         '_getiter_': default_guarded_getiter,
         '_iter_unpack_sequence_': guarded_iter_unpack_sequence,
         '_unpack_sequence_': guarded_unpack_sequence,
         '_inplacevar_': protected_inplacevar,
         '_apply_': _apply,
-        '_write_': _default_write_,
+        '_write_': _write_guard,
         
         # Define allowed imports
         '__allowed_modules__': ['math', 'datetime', 'time'],
@@ -116,11 +122,11 @@ def eval_restricted_script(script):
             'success': False
         }
 
-def _default_write_(obj):
+def _write_guard(obj):
+    """Stricter write guard that wraps objects using full_write_guard."""
     if isinstance(obj, types.ModuleType):
-        raise ValueError("Modules are not allowed in to be written to.")
-    
-    return obj
+        raise ValueError("Modules are not writable in the sandbox.")
+    return full_write_guard(obj)
 
 def safe_import(name, globals=None, locals=None, fromlist=(), level=0):
     allowed = ['math', 'datetime']
