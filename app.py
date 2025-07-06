@@ -573,7 +573,6 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
                                         )
                                     )
                                     yield assistant_msgs
-                                loop_tool_calling = True
 
                         if log_to_console:
                             print(f"usage: {event.usage}")
