@@ -13,8 +13,36 @@ from RestrictedPython.Utilities import utility_builtins
 from RestrictedPython.Limits import limited_range, limited_list, limited_tuple
 from io import StringIO
 import types
+import sys
+import os
+from pathlib import Path
+
+
+def unrestricted_python_enabled() -> bool:
+    """Check if UnrestrictedPython mode is enabled."""
+    val = os.environ.get("CODE_EXEC_UNRESTRICTED_PYTHON")
+    if val is not None:
+        return val == "1"
+    env_path = Path(".env")
+    if env_path.is_file():
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                k, sep, v = line.partition("=")
+                if k == "CODE_EXEC_UNRESTRICTED_PYTHON" and sep:
+                    return v.strip().strip('"').strip("'") == "1"
+    return False
+
+def eval_script(script):
+    """Evaluate Python script according to mode."""
+    if unrestricted_python_enabled():
+        return eval_unrestricted_script(script)
+    return eval_restricted_script(script)
 
 def eval_restricted_script(script):
+
     # Set up print collector and output handling
     all_prints = StringIO()
     
@@ -121,6 +149,26 @@ def eval_restricted_script(script):
             'error': str(e),
             'success': False
         }
+
+
+def eval_unrestricted_script(script):
+    """Execute Python script without sandboxing."""
+    output = StringIO()
+    old_stdout = sys.stdout
+    try:
+        sys.stdout = output
+        exec(script, {})
+        return {
+            'prints': output.getvalue(),
+            'success': True
+        }
+    except Exception as e:
+        return {
+            'error': str(e),
+            'success': False
+        }
+    finally:
+        sys.stdout = old_stdout
 
 def _write_guard(obj):
     """Stricter write guard that wraps objects using full_write_guard."""
