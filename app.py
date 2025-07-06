@@ -194,21 +194,17 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
 
         approval_items = []
         if pending_mcp_request:
-            txt = (message.get("text", "") or "").strip()
-            if not txt:
-                raise gr.Error("MCP tool call awaiting confirmation. Reply with 'y' to approve or 'n' to deny, optionally followed by a message.")
-            flag = txt[0].lower()
+            flag = message[0].lower()
             if flag == 'y':
                 approve = True
             elif flag == 'n':
                 approve = False
             else:
                 raise gr.Error("MCP tool call awaiting confirmation. Start your reply with 'y' or 'n'.")
-            message["text"] = txt[1:].lstrip()
             approval_items.append(pending_mcp_request)
             approval_items.append({
                 "type": "mcp_approval_response",
-                "approval_request_id": pending_mcp_request.get("id"),
+                "approval_request_id": pending_mcp_request.id,
                 "approve": approve,
             })
             pending_mcp_request = None
@@ -336,16 +332,19 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
 
                     history_openai_format.append({"role": "assistant", "content": str(content)})
 
-            for item in approval_items:
-                history_openai_format.append(item)
-
-            if message["text"]:
-                user_msg_parts.append({"type": "input_text", "text": message["text"]})
-            if message["files"]:
-                for file in message["files"]:
-                    user_msg_parts.extend(encode_file(file))
-            history_openai_format.append({"role": "user", "content": user_msg_parts})
-            user_msg_parts = []
+            # did we just come back from getting the user's MCP exec approval?
+            if approval_items:
+                for item in approval_items:
+                    history_openai_format.append(item)
+            else:
+                # handle ordinary chatbot input
+                if message["text"]:
+                    user_msg_parts.append({"type": "input_text", "text": message["text"]})
+                if message["files"]:
+                    for file in message["files"]:
+                        user_msg_parts.extend(encode_file(file))
+                history_openai_format.append({"role": "user", "content": user_msg_parts})
+                user_msg_parts = []
 
             if log_to_console:
                 print(f"br_prompt: {str(history_openai_format)}")
@@ -550,7 +549,7 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
 
                                 loop_tool_calling = True
                             elif output.type == "mcp_approval_request":
-                                pending_mcp_request = _event_to_dict(output)
+                                pending_mcp_request = output
                                 assistant_msgs.append(
                                     gr.ChatMessage(
                                         role="assistant",
