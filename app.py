@@ -670,6 +670,7 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
     )
     chat.textbox.file_count = "multiple"
     chat.textbox.max_plain_text_length = 2**31
+    chat.textbox.max_lines = 10
     chatbot = chat.chatbot
     chatbot.show_copy_button = True
     chatbot.height = 450
