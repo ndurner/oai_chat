@@ -192,23 +192,6 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
             api_key=oai_key
         )
 
-        approval_items = []
-        if pending_mcp_request:
-            flag = message[0].lower()
-            if flag == 'y':
-                approve = True
-            elif flag == 'n':
-                approve = False
-            else:
-                raise gr.Error("MCP tool call awaiting confirmation. Start your reply with 'y' or 'n'.")
-            approval_items.append(pending_mcp_request)
-            approval_items.append({
-                "type": "mcp_approval_response",
-                "approval_request_id": pending_mcp_request.id,
-                "approve": approve,
-            })
-            pending_mcp_request = None
-
         if model == "whisper":
             result = ""
             whisper_prompt = system_prompt
@@ -269,6 +252,23 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
                 content=gr.Image(type="pil", value=pil_img)
             )
         else:
+            approval_items = []
+            if pending_mcp_request:
+                flag = message[0].lower()
+                if flag == 'y':
+                    approve = True
+                elif flag == 'n':
+                    approve = False
+                else:
+                    raise gr.Error("MCP tool call awaiting confirmation. Start your reply with 'y' or 'n'.")
+                approval_items.append(pending_mcp_request)
+                approval_items.append({
+                    "type": "mcp_approval_response",
+                    "approval_request_id": pending_mcp_request.id,
+                    "approve": approve,
+                })
+                pending_mcp_request = None
+
             tools = []
             if python_use:
                 tools.append({
