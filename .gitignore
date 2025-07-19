@@ -2,3 +2,6 @@ __pycache__/*
 .DS_Store
 .venv/
 .env
+node_modules
+package-lock.json
+package.json
