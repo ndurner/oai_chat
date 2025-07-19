@@ -12,31 +12,18 @@ from chat_export import import_history, get_export_js
 from mcp_registry import load_registry, get_tools_for_server, call_local_mcp_tool, function_to_mcp_map, shutdown_local_mcp_clients
 from gradio.components.base import Component
 from types import SimpleNamespace
+from dotenv import load_dotenv
 
 from doc2json import process_docx
 from code_exec import eval_script
+
+load_dotenv()
 
 dump_controls = False
 log_to_console = False
 
 mcp_servers = load_registry()
 pending_mcp_request = None
-
-def load_openai_api_key():
-    key = os.environ.get("OPENAI_API_KEY")
-    if key:
-        return key
-    env_path = Path(".env")
-    if env_path.is_file():
-        with open(env_path) as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                k, sep, v = line.partition("=")
-                if k == "OPENAI_API_KEY" and sep:
-                    return v.strip().strip('"').strip("'")
-    return ""
 
 def encode_image(image_data):
     """Generates a prefix for image base64 data in the required format for the
@@ -727,7 +714,7 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
                     Third party terms and conditions apply, particularly
                     those of the LLM vendor (OpenAI) and hosting provider (Hugging Face). This app and the AI models may make mistakes, so verify any outputs.""")
 
-        oai_key = gr.Textbox(label="OpenAI API Key", elem_id="oai_key", value=load_openai_api_key())
+        oai_key = gr.Textbox(label="OpenAI API Key", elem_id="oai_key", value=os.environ.get("OPENAI_API_KEY"))
         model = gr.Dropdown(label="Model", value="gpt-4.1", allow_custom_value=True, elem_id="model",
                             choices=["gpt-4o", "gpt-4.1", "gpt-4.5-preview", "o3", "o3-high", "o3-low", "o1-pro", "o1-high", "o1-mini", "o1", "o3-mini-high", "o3-mini", "o4-mini", "o4-mini-high", "chatgpt-4o-latest", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "whisper", "gpt-image-1"])
         system_prompt = gr.TextArea("You are a helpful yet diligent AI assistant. Answer faithfully and factually correct. Respond with 'I do not know' if uncertain.", label="System/Developer Prompt", lines=3, max_lines=250, elem_id="system_prompt")  
