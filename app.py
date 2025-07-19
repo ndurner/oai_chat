@@ -6,9 +6,10 @@ from openai import OpenAI
 import json
 from PIL import Image
 import io
+import asyncio
 from settings_mgr import generate_download_settings_js, generate_upload_settings_js
 from chat_export import import_history, get_export_js
-from mcp_registry import load_registry, to_openai_tool
+from mcp_registry import load_registry, get_tools_for_server, call_local_mcp_tool, function_to_mcp_map, shutdown_local_mcp_clients
 from gradio.components.base import Component
 from types import SimpleNamespace
 
@@ -185,7 +186,7 @@ def process_values_js():
     }
     """
 
-def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model, python_use, web_search, *mcp_selected):
+async def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model, python_use, web_search, *mcp_selected):
     global pending_mcp_request
     try:
         client = OpenAI(
@@ -296,9 +297,10 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
                     "type": "web_search",
                     "search_context_size": "high"
                     })
+            # Add selected MCP servers to tools
             for sel, entry in zip(mcp_selected, mcp_servers):
                 if sel:
-                    tools.append(to_openai_tool(entry))
+                    tools.extend(await get_tools_for_server(entry))
             if not tools:
                 tools = None
 
@@ -480,7 +482,113 @@ def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model
                                                 yield assistant_msgs
 
                             elif output.type == "function_call":
-                                if output.name == "eval_python":
+                                # Check if this is a local MCP tool call
+                                function_name = output.name
+                                if function_name in function_to_mcp_map:
+                                    try:
+                                        mcp_info = function_to_mcp_map[function_name]
+                                        server_name = mcp_info["server_name"]
+                                        tool_name = mcp_info["tool_name"]
+                                        
+                                        # Find the server entry
+                                        server_entry = None
+                                        for entry in mcp_servers:
+                                            if entry["name"] == server_name:
+                                                server_entry = entry
+                                                break
+                                        
+                                        if server_entry:
+                                            history_openai_format.append({
+                                                "type": "function_call",
+                                                "name": function_name,
+                                                "arguments": output.arguments,
+                                                "call_id": output.call_id
+                                            })
+                                            
+                                            # Parse arguments
+                                            arguments = json.loads(output.arguments)
+                                            call_id = output.call_id
+                                            
+                                            # Show the function call to the user
+                                            parent_msg = gr.ChatMessage(
+                                                role="assistant",
+                                                content="",
+                                                metadata={"title": f"MCP: {server_name} - {tool_name}", "id": call_id, "status": "pending"},
+                                            )
+                                            assistant_msgs.append(parent_msg)
+                                            assistant_msgs.append(
+                                                gr.ChatMessage(
+                                                    role="assistant",
+                                                    content=f"``` arguments\n{output.arguments}\n```",
+                                                    metadata={"title": "request", "parent_id": call_id},
+                                                )
+                                            )
+                                            yield assistant_msgs
+                                            
+                                            # Call the MCP tool (async)
+                                            try:
+                                                tool_result = await call_local_mcp_tool(server_entry, tool_name, arguments)
+                                                # Extract text from result
+                                                if isinstance(tool_result, list) and tool_result and hasattr(tool_result[0], 'text'):
+                                                    result_text = "\n".join([item.text for item in tool_result])
+                                                elif hasattr(tool_result, 'text'):
+                                                    result_text = tool_result.text
+                                                else:
+                                                    result_text = str(tool_result)
+                                                # Show result to the user
+                                                assistant_msgs.append(
+                                                    gr.ChatMessage(
+                                                        role="assistant",
+                                                        content=f"``` result\n{result_text}\n```",
+                                                        metadata={"title": "response", "parent_id": call_id, "status": "done"},
+                                                    )
+                                                )
+                                                parent_msg.metadata["status"] = "done"
+                                                yield assistant_msgs
+                                                # Add result to history
+                                                history_openai_format.append(
+                                                    {
+                                                        "type": "function_call_output",
+                                                        "call_id": output.call_id,
+                                                        "output": result_text,
+                                                    }
+                                                )
+                                            except Exception as e:
+                                                error_message = str(e)
+                                                history_openai_format.append({
+                                                    "type": "function_call_output",
+                                                    "call_id": output.call_id,
+                                                    "output": json.dumps({"error": error_message})
+                                                })
+                                                assistant_msgs.append(
+                                                    gr.ChatMessage(
+                                                        role="assistant",
+                                                        content=f"``` error\n{error_message}\n```",
+                                                        metadata={"title": "response", "parent_id": call_id, "status": "done"},
+                                                    )
+                                                )
+                                                parent_msg.metadata["status"] = "done"
+                                                yield assistant_msgs
+                                            
+                                            # Need to continue the loop to process the function output
+                                            loop_tool_calling = True
+                                        else:
+                                            # Server entry not found
+                                            error_message = f"Server {server_name} not found"
+                                            history_openai_format.append({
+                                                "type": "function_call_output",
+                                                "call_id": output.call_id,
+                                                "output": json.dumps({"error": error_message})
+                                            })
+                                    except Exception as e:
+                                        # Some error occurred during processing
+                                        error_message = f"Error processing local MCP tool call: {str(e)}"
+                                        history_openai_format.append({
+                                            "type": "function_call_output",
+                                            "call_id": output.call_id,
+                                            "output": json.dumps({"error": error_message})
+                                        })
+                                elif output.name == "eval_python":
                                     try:
                                         history_openai_format.append({
                                             "type": "function_call",

@@ -1,5 +1,6 @@
 pydantic == 2.10.6
-gradio == 5.36.2
+gradio == 5.38.0
 openai == 1.76.0
 lxml
 RestrictedPython
+fastmcp

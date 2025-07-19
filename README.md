@@ -23,7 +23,7 @@ Features:
    * example: download an ICS calendar file the model has created for you
 * streaming chat
 * image generation (via DALL-E 3)
-* remote MCP server support via configurable registry
+* MCP server support (both remote and local) via configurable registry
 * optional UnrestrictedPython execution when `CODE_EXEC_UNRESTRICTED_PYTHON=1`
 
 The MCP registry is looked up in the following order:
@@ -34,5 +34,19 @@ The MCP registry is looked up in the following order:
 See `mcp_registry.sample.json` for an example configuration.
 Headers and query parameters may reference environment variables using the `env:` prefix.
 Use `"allowed_tools": ["*"]` to permit all tools from a server.
+
+For local MCP servers, use the `command` and `args` fields to specify how to launch the server. Environment variables can be passed via the `env` field. For example:
+```json
+{
+  "name": "exa_local",
+  "command": "npx",
+  "args": ["-y", "exa-mcp-server"],
+  "env": {
+    "EXA_API_KEY": "env:EXA_API_KEY"
+  },
+  "allowed_tools": ["*"]
+}
+```
+
 When an MCP tool requires approval, the assistant will notify you in chat.
 Reply with `y` to approve or `n` to deny the request, optionally adding a comment after the `y` or `n`.
