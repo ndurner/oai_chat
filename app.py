@@ -23,7 +23,6 @@ dump_controls = False
 log_to_console = False
 
 mcp_servers = load_registry()
-pending_mcp_request = None
 
 def encode_image(image_data):
     """Generates a prefix for image base64 data in the required format for the
@@ -146,6 +145,43 @@ def undo(history):
     history.pop()
     return history
 
+def clear_both_histories():
+    """Clear both chatbot display history and OpenAI format history"""
+    return [], []
+
+def undo_both_histories(chatbot_history, openai_history):
+    """Remove last message from both histories"""
+
+    # remove all Gradio messages until last user message
+    while chatbot_history and chatbot_history[-1]["role"] != "user":
+        chatbot_history.pop()
+    if chatbot_history and chatbot_history[-1]["role"] == "user":
+        chatbot_history.pop()
+
+    # remove all messages from OpenAI history until last user message
+    while openai_history and not (isinstance(openai_history[-1], dict) and openai_history[-1].get("role") == "user"):
+        openai_history.pop()
+    if openai_history and isinstance(openai_history[-1], dict) and openai_history[-1].get("role") == "user":
+        openai_history.pop()
+
+    return chatbot_history, openai_history
+
+def retry_last_message(chatbot_history, openai_history):
+    """Remove last assistant message for retry"""
+    if chatbot_history and len(chatbot_history) > 0:
+        # Remove the last message if it's from assistant
+        last_msg = chatbot_history[-1]
+        if hasattr(last_msg, 'role') and last_msg.role == "assistant":
+            new_chatbot = chatbot_history[:-1]
+            new_openai = openai_history[:-1] if openai_history else []
+            return new_chatbot, new_openai
+        elif isinstance(last_msg, dict) and last_msg.get('role') == "assistant":
+            new_chatbot = chatbot_history[:-1]
+            new_openai = openai_history[:-1] if openai_history else []
+            return new_chatbot, new_openai
+    
+    return chatbot_history, openai_history
+
 def dump(history):
     return str(history)
 
@@ -173,8 +209,7 @@ def process_values_js():
     }
     """
 
-async def bot(message, history, oai_key, system_prompt, temperature, max_tokens, model, python_use, web_search, *mcp_selected):
-    global pending_mcp_request
+async def bot(message, history, history_openai_format, oai_key, system_prompt, temperature, max_tokens, model, python_use, web_search, *mcp_selected):
     try:
         client = OpenAI(
             api_key=oai_key
@@ -241,21 +276,21 @@ async def bot(message, history, oai_key, system_prompt, temperature, max_tokens,
             )
         else:
             approval_items = []
-            if pending_mcp_request:
-                flag = message[0].lower()
-                if flag == 'y':
-                    approve = True
-                elif flag == 'n':
-                    approve = False
-                else:
-                    raise gr.Error("MCP tool call awaiting confirmation. Start your reply with 'y' or 'n'.")
-                approval_items.append(pending_mcp_request)
-                approval_items.append({
-                    "type": "mcp_approval_response",
-                    "approval_request_id": pending_mcp_request.id,
-                    "approve": approve,
-                })
-                pending_mcp_request = None
+            if history_openai_format:
+                last_msg = history_openai_format[-1]
+                if last_msg.type == "mcp_approval_request":
+                    flag = message[0].lower()
+                    if flag == 'y':
+                        approve = True
+                    elif flag == 'n':
+                        approve = False
+                    else:
+                        raise gr.Error("MCP tool call awaiting confirmation. Start your reply with 'y' or 'n'.")
+                    history_openai_format.append({
+                        "type": "mcp_approval_response",
+                        "approval_request_id": pending_mcp_request.id,
+                        "approve": approve,
+                    })
 
             tools = []
             if python_use:
@@ -294,46 +329,23 @@ async def bot(message, history, oai_key, system_prompt, temperature, max_tokens,
             if log_to_console:
                 print(f"bot history: {str(history)}")
 
-            history_openai_format = []
+            instructions = None
             user_msg_parts = []
 
             if system_prompt:
-                if not model.startswith("o"):
-                    role = "system"
-                else:
-                    role = "developer"
-
                     if not system_prompt.startswith("Formatting re-enabled"):
-                        system_prompt = "Formatting re-enabled\n" + system_prompt
-                history_openai_format.append({"role": role, "content": system_prompt})
+                        instructions = "Formatting re-enabled\n" + system_prompt
+                    else:
+                        instructions = system_prompt
 
-            for msg in history:
-                role = msg.role if hasattr(msg, "role") else msg["role"]
-                content = msg.content if hasattr(msg, "content") else msg["content"]
-
-                if role == "user":
-                    user_msg_parts.extend(normalize_user_content(content))
-
-                if role == "assistant":
-                    if user_msg_parts:
-                        history_openai_format.append({"role": "user", "content": user_msg_parts})
-                        user_msg_parts = []
-
-                    history_openai_format.append({"role": "assistant", "content": str(content)})
-
-            # did we just come back from getting the user's MCP exec approval?
-            if approval_items:
-                for item in approval_items:
-                    history_openai_format.append(item)
-            else:
-                # handle ordinary chatbot input
-                if message["text"]:
-                    user_msg_parts.append({"type": "input_text", "text": message["text"]})
-                if message["files"]:
-                    for file in message["files"]:
-                        user_msg_parts.extend(encode_file(file))
-                history_openai_format.append({"role": "user", "content": user_msg_parts})
-                user_msg_parts = []
+            # handle chatbot input
+            if message["text"]:
+                user_msg_parts.append({"type": "input_text", "text": message["text"]})
+            if message["files"]:
+                for file in message["files"]:
+                    user_msg_parts.extend(encode_file(file))
+            history_openai_format.append({"role": "user", "content": user_msg_parts})
+            user_msg_parts = []
 
             if log_to_console:
                 print(f"br_prompt: {str(history_openai_format)}")
@@ -375,15 +387,19 @@ async def bot(message, history, oai_key, system_prompt, temperature, max_tokens,
                 request_params = {
                     "model": model,
                     "input": history_openai_format,
-                    "store": False
+                    "store": False,
+                    "instructions": instructions
                 }
                 if reasoner:
+                    reasoning_dict = {"summary": "auto"}
                     if high:
-                        request_params["reasoning"] = {"effort": "high"}
+                        reasoning_dict["effort"] = "high"
                     elif low:
-                        request_params["reasoning"] = {"effort": "low"}
+                        reasoning_dict["effort"] = "low"
                     else:
-                        request_params["reasoning"] = {"effort": "medium"}
+                        reasoning_dict["effort"] = "medium"
+                    request_params["reasoning"] = reasoning_dict
+                    request_params["include"] = ["reasoning.encrypted_content"]
                 else:
                     request_params["temperature"] = temperature
                 if tools:
@@ -410,7 +426,20 @@ async def bot(message, history, oai_key, system_prompt, temperature, max_tokens,
                             assistant_msgs.append(final_msg)
                         whole_response += event.delta
                         final_msg.content = whole_response
-                        yield assistant_msgs
+                        yield assistant_msgs, history_openai_format
+                    elif event.type == "response.output_item.added" and event.item.type == "reasoning":
+                        summary = ""
+                        for str in event.item.summary:
+                            if str.type == "summary_text":
+                                summary += str.text
+                        if summary:
+                            rs_msg = gr.ChatMessage(
+                                role="assistant",
+                                content=summary,
+                                metadata={"title": "Reasoning", "id": event.item.id, "status": "done"},
+                            )
+                            assistant_msgs.append(rs_msg)
+                            yield assistant_msgs, history_openai_format
                     elif event.type in (
                         "response.mcp_list_tools.in_progress",
                         "response.mcp_call.in_progress",
@@ -425,7 +454,7 @@ async def bot(message, history, oai_key, system_prompt, temperature, max_tokens,
                             },
                         )
                         assistant_msgs.append(mcp_event_msg)
-                        yield assistant_msgs
+                        yield assistant_msgs, history_openai_format
                     elif event.type in (
                         "response.mcp_list_tools.completed",
                         "response.mcp_list_tools.failed",
@@ -434,10 +463,12 @@ async def bot(message, history, oai_key, system_prompt, temperature, max_tokens,
                     ):
                         if mcp_event_msg is not None:
                             mcp_event_msg.metadata["status"] = "done"
-                        yield assistant_msgs
+                        yield assistant_msgs, history_openai_format
                     elif event.type == "response.completed":
                         response = event.response
                         outputs = response.output
+
+                        history_openai_format.extend(outputs)
 
                         for output in outputs:
                             if output.type == "message":
@@ -449,7 +480,7 @@ async def bot(message, history, oai_key, system_prompt, temperature, max_tokens,
                                                 assistant_msgs.append(final_msg)
                                             whole_response += part.text
                                             final_msg.content = whole_response
-                                            yield assistant_msgs
+                                            yield assistant_msgs, history_openai_format
 
                                         anns = part.annotations
                                         if anns:
@@ -466,8 +497,7 @@ async def bot(message, history, oai_key, system_prompt, temperature, max_tokens,
                                                     final_msg = gr.ChatMessage(role="assistant", content="")
                                                     assistant_msgs.append(final_msg)
                                                 final_msg.content = whole_response
-                                                yield assistant_msgs
-
+                                                yield assistant_msgs, history_openai_format
                             elif output.type == "function_call":
                                 # Check if this is a local MCP tool call
                                 function_name = output.name
@@ -510,7 +540,7 @@ async def bot(message, history, oai_key, system_prompt, temperature, max_tokens,
                                                     metadata={"title": "request", "parent_id": call_id},
                                                 )
                                             )
-                                            yield assistant_msgs
+                                            yield assistant_msgs, history_openai_format
                                             
                                             # Call the MCP tool (async)
                                             try:
@@ -531,7 +561,6 @@ async def bot(message, history, oai_key, system_prompt, temperature, max_tokens,
                                                     )
                                                 )
                                                 parent_msg.metadata["status"] = "done"
-                                                yield assistant_msgs
                                                 # Add result to history
                                                 history_openai_format.append(
                                                     {
@@ -540,6 +569,7 @@ async def bot(message, history, oai_key, system_prompt, temperature, max_tokens,
                                                         "output": result_text,
                                                     }
                                                 )
+                                                yield assistant_msgs, history_openai_format
                                             except Exception as e:
                                                 error_message = str(e)
                                                 history_openai_format.append({
@@ -555,7 +585,7 @@ async def bot(message, history, oai_key, system_prompt, temperature, max_tokens,
                                                     )
                                                 )
                                                 parent_msg.metadata["status"] = "done"
-                                                yield assistant_msgs
+                                                yield assistant_msgs, history_openai_format
                                             
                                             # Need to continue the loop to process the function output
                                             loop_tool_calling = True
@@ -601,7 +631,7 @@ async def bot(message, history, oai_key, system_prompt, temperature, max_tokens,
                                                 metadata={"title": "request", "parent_id": call_id},
                                             )
                                         )
-                                        yield assistant_msgs
+                                        yield assistant_msgs, history_openai_format
 
                                         tool_result = eval_script(tool_script)
                                         result_text = (
@@ -618,7 +648,7 @@ async def bot(message, history, oai_key, system_prompt, temperature, max_tokens,
                                             )
                                         )
                                         parent_msg.metadata["status"] = "done"
-                                        yield assistant_msgs
+                                        yield assistant_msgs, history_openai_format
 
                                         history_openai_format.append(
                                             {
@@ -647,13 +677,13 @@ async def bot(message, history, oai_key, system_prompt, temperature, max_tokens,
                                             )
                                         )
                                         parent_msg.metadata["status"] = "done"
-                                        yield assistant_msgs
+                                        yield assistant_msgs, history_openai_format
                                 else:
                                         history_openai_format.append(outputs)
 
                                 loop_tool_calling = True
                             elif output.type == "mcp_approval_request":
-                                pending_mcp_request = output
+                                history_openai_format.append(output)
                                 assistant_msgs.append(
                                     gr.ChatMessage(
                                         role="assistant",
@@ -663,7 +693,7 @@ async def bot(message, history, oai_key, system_prompt, temperature, max_tokens,
                                         options=[{"value": "y", "label": "Yes"}, {"value": "n", "label": "No"}],
                                     )
                                 )
-                                yield assistant_msgs
+                                yield assistant_msgs, history_openai_format
                                 return
                             elif output.type == "mcp_call":
                                 history_openai_format.append(_event_to_dict(output))
@@ -675,7 +705,7 @@ async def bot(message, history, oai_key, system_prompt, temperature, max_tokens,
                                             metadata={"title": "response"},
                                         )
                                     )
-                                    yield assistant_msgs
+                                    yield assistant_msgs, history_openai_format
 
                         if log_to_console:
                             print(f"usage: {event.usage}")
@@ -685,7 +715,7 @@ async def bot(message, history, oai_key, system_prompt, temperature, max_tokens,
                             final_msg = gr.ChatMessage(role="assistant", content="")
                             assistant_msgs.append(final_msg)
                         final_msg.content = whole_response
-                        yield assistant_msgs
+                        yield assistant_msgs, history_openai_format
 
         if log_to_console:
             print(f"br_result: {str(history)}")
@@ -702,9 +732,9 @@ def import_history_guarded(oai_key, history, file):
         raise gr.Error(f"OpenAI login error: {str(e)}")
 
     # actual import
-    chat_history, system_prompt_value = import_history(history, file)
-
-    return chat_history, system_prompt_value, chat_history
+    chat_history, system_prompt_value, history_openai_format = import_history(history, file)
+ 
+    return chat_history, system_prompt_value, chat_history, history_openai_format
 
 with gr.Blocks(delete_cache=(86400, 86400)) as demo:
     gr.Markdown("# OpenAI™️ Chat (Nils' Version™️)")
@@ -763,10 +793,12 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
         dl_settings_button.click(None, controls, js=generate_download_settings_js("oai_chat_settings.bin", control_ids))
         ul_settings_button.click(None, None, None, js=generate_upload_settings_js(control_ids))
 
+    history_openai_format = gr.State([])
     chat = gr.ChatInterface(
         fn=bot,
         multimodal=True,
-        additional_inputs=controls,
+        additional_inputs=[history_openai_format] + controls,
+        additional_outputs=[history_openai_format],
         autofocus=False,
         type="messages",
         chatbot=gr.Chatbot(elem_id="chatbot", type="messages"),
@@ -778,6 +810,24 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
     chatbot = chat.chatbot
     chatbot.show_copy_button = True
     chatbot.height = 450
+
+    # Add event handlers to sync chatbot actions with history_openai_format state
+    chatbot.clear(
+        fn=clear_both_histories,
+        outputs=[chatbot, history_openai_format]
+    )
+    
+    chatbot.undo(
+        fn=undo_both_histories,
+        inputs=[chatbot, history_openai_format],
+        outputs=[chatbot, history_openai_format]
+    )
+    
+    chatbot.retry(
+        fn=retry_last_message,
+        inputs=[chatbot, history_openai_format],
+        outputs=[chatbot, history_openai_format]
+    )
 
 
     if dump_controls:
@@ -846,6 +896,6 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
         """)
         import_button.upload(import_history_guarded,
                             inputs=[oai_key, chatbot, import_button],
-                            outputs=[chatbot, system_prompt, chat.chatbot_state])
+                            outputs=[chatbot, system_prompt, chat.chatbot_state, history_openai_format])
 
 demo.queue(default_concurrency_limit = None).launch()

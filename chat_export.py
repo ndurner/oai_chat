@@ -4,6 +4,7 @@ import os, io
 from PIL import Image
 import gradio as gr
 from gradio import processing_utils, utils
+import openai
 
 def import_history(history, file):
     if os.path.getsize(file.name) > 100e6:
@@ -20,6 +21,7 @@ def import_history(history, file):
         messages = import_data['messages']
         system_prompt_value = ''
         chat_history = []
+        openai_history = []
         
         msg_num = 1
         for msg in messages:
@@ -40,6 +42,14 @@ def import_history(history, file):
                                 "role": msg['role'],
                                 "content": {"path": cache_path}
                             })
+                            openai_history.append({
+                                "role": "user",
+                                "content": [{
+                                    "type": "input_image",
+                                    "detail": "high",
+                                    "image_url": data_uri
+                                }]
+                            })
                         elif item.get('type', '') == 'file':
                             fname = os.path.basename(item['file'].get('name', f'download{msg_num}'))
                             file_data = base64.b64decode(item['file']['url'].split(',')[1])
@@ -51,13 +61,36 @@ def import_history(history, file):
                                 "role": msg['role'],
                                 "content": {"path": cache_path}
                             })
+                            openai_history.append({
+                                "role": "user",
+                                "content": [{
+                                    "type": "input_text",
+                                    "content": file_data
+                                }]
+                            })
                         else:
-                            chat_history.append(msg)
+                            # untested - does not happen?
+                            chat_history.append(item["content"])
+                            openai_history.append({
+                                "role": "user",
+                                "content": item["content"]
+                            })
                 else:
                     chat_history.append(msg)
+                    openai_history.append({
+                        "role": "user",
+                        "content": content
+                    })
                     
             elif msg['role'] == 'assistant':
                 chat_history.append(msg)
+                openai_history.append(openai.types.responses.ResponseOutputMessage(
+                    id=f"msg_{msg_num}",
+                    role="assistant",
+                    content=[openai.types.responses.ResponseOutputText(type="output_text", text=msg['content'], annotations=[])],
+                    status="completed",
+                    type="message"
+                ))
 
             msg_num = msg_num + 1
             
@@ -71,6 +104,8 @@ def import_history(history, file):
             system_prompt_value = ''
         
         chat_history = []
+        openai_history = []
+        msg_num = 1
         # Convert tuple/pair format to messages format
         for pair in legacy_history:
             if pair[0]:  # User message
@@ -88,6 +123,14 @@ def import_history(history, file):
                                 "role": "user",
                                 "content": {"path": cache_path}
                             })
+                            openai_history.append({
+                                "role": "user",
+                                "content": [{
+                                    "type": "input_image",
+                                    "detail": "high",
+                                    "image_url": file_data
+                                }]
+                            })
                         else:
                             fname = pair[0]['file'].get('name', 'download')
                             file_bytes = base64.b64decode(file_data.split(',')[1])
@@ -96,14 +139,29 @@ def import_history(history, file):
                                 "role": "user",
                                 "content": {"path": cache_path}
                             })
+                            openai_history.append({
+                                "role": "user",
+                                "content": [{
+                                    "type": "input_text",
+                                    "content": file_bytes
+                                }]
+                            })
                     else:
                         # Keep as-is but convert to message format
                         chat_history.append({
                             "role": "user",
                             "content": pair[0]
                         })
+                        openai_history.append({
+                            "role": "user",
+                            "content": pair[0]
+                        })
                 else:
                     chat_history.append({
+                        "role": "user",
+                        "content": pair[0]
+                    })
+                    openai_history.append({
                         "role": "user",
                         "content": pair[0]
                     })
@@ -113,8 +171,17 @@ def import_history(history, file):
                     "role": "assistant",
                     "content": pair[1]
                 })
+                openai_history.append(openai.types.responses.ResponseOutputMessage(
+                    id=f"msg_{msg_num}",
+                    role="assistant",
+                    content=[openai.types.responses.ResponseOutputText(type="output_text", text=pair[1], annotations=[])],
+                    status="completed",
+                    type="message"
+                ))
+            
+            msg_num = msg_num + 1
 
-    return chat_history, system_prompt_value
+    return chat_history, system_prompt_value, openai_history
 
 def get_export_js():
     return """
