@@ -22,7 +22,7 @@ Features:
  * file download
    * example: download an ICS calendar file the model has created for you
 * streaming chat
-* image generation (via DALL-E 3)
+* image generation (via gpt-image-1, aka "ImageGen")
 * MCP server support (both remote and local) via configurable registry
 * optional UnrestrictedPython execution when `CODE_EXEC_UNRESTRICTED_PYTHON=1`
 
