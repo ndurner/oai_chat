@@ -351,7 +351,7 @@ async def bot(message, history, history_openai_format, oai_key, system_prompt, t
                 print(f"br_prompt: {str(history_openai_format)}")
 
             if model in ["o1", "o1-high", "o1-pro", "o1-2024-12-17", "o3-mini", "o3-mini-high", "o4-mini", "o4-mini-high",
-                         "o3", "o3-high", "o3-low"]:
+                         "o3", "o3-high", "o3-low", "gpt-5", "gpt-5-mini"]:
                 reasoner = True
 
                 # reasoning effort
@@ -745,8 +745,8 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
                     those of the LLM vendor (OpenAI) and hosting provider (Hugging Face). This app and the AI models may make mistakes, so verify any outputs.""")
 
         oai_key = gr.Textbox(label="OpenAI API Key", elem_id="oai_key", value=os.environ.get("OPENAI_API_KEY"))
-        model = gr.Dropdown(label="Model", value="gpt-4.1", allow_custom_value=True, elem_id="model",
-                            choices=["gpt-4o", "gpt-4.1", "gpt-4.5-preview", "o3", "o3-high", "o3-low", "o1-pro", "o1-high", "o1-mini", "o1", "o3-mini-high", "o3-mini", "o4-mini", "o4-mini-high", "chatgpt-4o-latest", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "whisper", "gpt-image-1"])
+        model = gr.Dropdown(label="Model", value="gpt-5-mini", allow_custom_value=True, elem_id="model",
+                            choices=["gpt-5", "gpt-5-mini", "gpt-5-chat-latest", "gpt-4o", "gpt-4.1", "gpt-4.5-preview", "o3", "o3-high", "o3-low", "o1-pro", "o1-high", "o1-mini", "o1", "o3-mini-high", "o3-mini", "o4-mini", "o4-mini-high", "chatgpt-4o-latest", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "whisper", "gpt-image-1"])
         system_prompt = gr.TextArea("You are a helpful yet diligent AI assistant. Answer faithfully and factually correct. Respond with 'I do not know' if uncertain.", label="System/Developer Prompt", lines=3, max_lines=250, elem_id="system_prompt")  
         temp = gr.Slider(0, 2, label="Temperature", elem_id="temp", value=1)
         max_tokens = gr.Slider(0, 16384, label="Max. Tokens", elem_id="max_tokens", value=0)
