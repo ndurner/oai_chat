@@ -4,3 +4,4 @@ openai == 1.60.1
 lxml
 PyMuPDF
 RestrictedPython
+python-dotenv

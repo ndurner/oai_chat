@@ -6,6 +6,23 @@ import json
 import fitz
 from PIL import Image
 import io
+from typing import Optional
+from types import SimpleNamespace
+try:
+    # Optional dependency; used to load .env for AWS creds
+    from dotenv import load_dotenv as _load_dotenv
+
+    def loadenv() -> None:
+        """Load environment variables from a .env file, if present.
+
+        This function is provided so callers can ensure .env values are loaded
+        before reading environment variables. It is safe to call multiple times.
+        """
+        _load_dotenv(override=False)
+except Exception:
+    # Fallback if python-dotenv isn't installed; define a no-op loadenv
+    def loadenv() -> None:
+        return None
 from settings_mgr import generate_download_settings_js, generate_upload_settings_js
 from chat_export import import_history, get_export_js
 
@@ -16,6 +33,26 @@ dump_controls = False
 log_to_console = False
 
 temp_files = []
+
+# Ensure environment variables from .env are available early
+loadenv()
+
+def _make_client(oai_key: Optional[str]) -> OpenAI:
+    """Create an OpenAI client for either OpenAI or AWS Bedrock compatibility.
+
+    If AWS_OPENAI_ENDPOINT is set, use AWS Bedrock-compatible endpoint and the
+    bearer token from AWS_BEARER_TOKEN_BEDROCK. Otherwise, use the provided OpenAI key.
+    """
+    aws_endpoint = os.getenv("AWS_OPENAI_ENDPOINT")
+    if aws_endpoint:
+        aws_key = os.getenv("AWS_BEARER_TOKEN_BEDROCK")
+        if not aws_key:
+            raise gr.Error("AWS_BEARER_TOKEN_BEDROCK is not set. Check your .env or environment.")
+        return OpenAI(base_url=aws_endpoint, api_key=aws_key)
+    # Default to OpenAI
+    if not oai_key:
+        raise gr.Error("OpenAI API key is empty. Provide a key or configure AWS.")
+    return OpenAI(api_key=oai_key)
 
 def encode_image(image_data):
     """Generates a prefix for image base64 data in the required format for the
@@ -148,9 +185,7 @@ def process_values_js():
 
 def bot(message, history, oai_key, system_prompt, seed, temperature, max_tokens, model, python_use):
     try:
-        client = OpenAI(
-            api_key=oai_key
-        )
+        client = _make_client(oai_key)
 
         if model == "whisper":
             result = ""
@@ -267,7 +302,10 @@ def bot(message, history, oai_key, system_prompt, seed, temperature, max_tokens,
             if log_to_console:
                 print(f"br_prompt: {str(history_openai_format)}")
 
-            if model in ["o1", "o1-high", "o1-2024-12-17", "o3-mini", "o3-mini-high"]:
+            if model in [
+                "o1", "o1-high", "o1-2024-12-17", "o3-mini", "o3-mini-high",
+                "openai.gpt-oss-20b-1:0", "openai.gpt-oss-120b-1:0"
+            ]:
                 # reasoning effort
                 high = False
                 if model == "o1-high":
@@ -308,7 +346,7 @@ def bot(message, history, oai_key, system_prompt, seed, temperature, max_tokens,
                     tool_name_accum = None
                     tool_args_accum = ""
                     tool_call_id = None
-                    # process
+
                     for chunk in response:
                         if chunk.choices:
                             txt = ""
@@ -401,10 +439,20 @@ def bot(message, history, oai_key, system_prompt, seed, temperature, max_tokens,
 def import_history_guarded(oai_key, history, file):
     # check credentials first
     try:
-        client = OpenAI(api_key=oai_key)
-        client.models.retrieve("gpt-4o")
+        client = _make_client(oai_key)
+        # Perform a lightweight capability check depending on provider
+        if os.getenv("AWS_OPENAI_ENDPOINT"):
+            # Use a Bedrock-compatible minimal call to validate credentials
+            client.chat.completions.create(
+                model="openai.gpt-oss-20b-1:0",
+                messages=[{"role": "developer", "content": "Creds check."}, {"role": "user", "content": "ping"}],
+                max_tokens=1,
+            )
+        else:
+            client.models.retrieve("gpt-4o")
     except Exception as e:
-        raise gr.Error(f"OpenAI login error: {str(e)}")
+        provider = "AWS Bedrock" if os.getenv("AWS_OPENAI_ENDPOINT") else "OpenAI"
+        raise gr.Error(f"{provider} login error: {str(e)}")
 
     # actual import
     return import_history(history, file)
@@ -417,9 +465,34 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
                     Third party terms and conditions apply, particularly
                     those of the LLM vendor (OpenAI) and hosting provider (Hugging Face). This app and the AI models may make mistakes, so verify any outputs.""")
 
-        oai_key = gr.Textbox(label="OpenAI API Key", elem_id="oai_key")
-        model = gr.Dropdown(label="Model", value="gpt-4-turbo", allow_custom_value=True, elem_id="model",
-                            choices=["gpt-4o", "gpt-4-turbo", "o1-high", "o1-mini", "o1", "o3-mini-high", "o3-mini", "o1-preview", "chatgpt-4o-latest", "gpt-4o-2024-05-13", "gpt-4o-2024-11-20", "gpt-4o-mini", "gpt-4", "gpt-4.5-preview", "gpt-3.5-turbo", "gpt-3.5-turbo-16k", "gpt-3.5-turbo-1106", "whisper", "dall-e-3"])
+        # Determine provider and set UI defaults
+        is_aws = bool(os.getenv("AWS_OPENAI_ENDPOINT"))
+        # Prefer the correct credential based on provider
+        key_label = "AWS Bearer Token" if is_aws else "OpenAI API Key"
+        key_value = (
+            os.getenv("AWS_BEARER_TOKEN_BEDROCK", "") if is_aws else os.getenv("OPENAI_API_KEY", "")
+        )
+        oai_key = gr.Textbox(
+            label=key_label,
+            elem_id="oai_key",
+            value=key_value
+        )
+        model_choices = (
+            ["openai.gpt-oss-20b-1:0", "openai.gpt-oss-120b-1:0"]
+            if is_aws
+            else [
+                "gpt-4o", "gpt-4-turbo", "o1-high", "o1-mini", "o1", "o3-mini-high", "o3-mini",
+                "o1-preview", "chatgpt-4o-latest", "gpt-4o-2024-05-13", "gpt-4o-2024-11-20", "gpt-4o-mini",
+                "gpt-4", "gpt-4.5-preview", "gpt-3.5-turbo", "gpt-3.5-turbo-16k", "gpt-3.5-turbo-1106", "whisper", "dall-e-3"
+            ]
+        )
+        model = gr.Dropdown(
+            label="Model",
+            value=("openai.gpt-oss-20b-1:0" if is_aws else "gpt-4-turbo"),
+            allow_custom_value=True,
+            elem_id="model",
+            choices=model_choices,
+        )
         system_prompt = gr.TextArea("You are a helpful yet diligent AI assistant. Answer faithfully and factually correct. Respond with 'I do not know' if uncertain.", label="System/Developer Prompt", lines=3, max_lines=250, elem_id="system_prompt")  
         seed = gr.Textbox(label="Seed", elem_id="seed")
         temp = gr.Slider(0, 2, label="Temperature", elem_id="temp", value=1)
