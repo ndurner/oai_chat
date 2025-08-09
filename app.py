@@ -209,7 +209,7 @@ def process_values_js():
     }
     """
 
-async def bot(message, history, history_openai_format, oai_key, system_prompt, temperature, max_tokens, model, python_use, web_search, *mcp_selected):
+async def bot(message, history, history_openai_format, oai_key, system_prompt, temperature, max_tokens, model, reasoning_effort, verbosity, python_use, web_search, *mcp_selected):
     try:
         client = OpenAI(
             api_key=oai_key
@@ -350,33 +350,8 @@ async def bot(message, history, history_openai_format, oai_key, system_prompt, t
             if log_to_console:
                 print(f"br_prompt: {str(history_openai_format)}")
 
-            if model in ["o1", "o1-high", "o1-pro", "o1-2024-12-17", "o3-mini", "o3-mini-high", "o4-mini", "o4-mini-high",
-                         "o3", "o3-high", "o3-low", "gpt-5", "gpt-5-mini"]:
-                reasoner = True
-
-                # reasoning effort
-                high = False
-                low = False
-                if model == "o1-high":
-                    model = "o1"
-                    high = True
-                if model == "o1-pro":
-                    model = "o1-pro"
-                    high = True
-                elif model == "o3-mini-high":
-                    model = "o3-mini"
-                    high = True
-                elif model == "o4-mini-high":
-                    model = "o4-mini"
-                    high = True
-                elif model == "o3-high":
-                    model = "o3"
-                    high = True
-                elif model == "o3-low":
-                    model = "o3"
-                    low = True
-            else:
-                reasoner = False
+            reasoner_models = {"o1", "o1-pro", "o1-2024-12-17", "o3-mini", "o4-mini", "o3", "gpt-5", "gpt-5-mini"}
+            reasoner = model in reasoner_models
 
             assistant_msgs = []
             whole_response = ""
@@ -392,16 +367,17 @@ async def bot(message, history, history_openai_format, oai_key, system_prompt, t
                 }
                 if reasoner:
                     reasoning_dict = {"summary": "auto"}
-                    if high:
-                        reasoning_dict["effort"] = "high"
-                    elif low:
-                        reasoning_dict["effort"] = "low"
+                    if reasoning_effort in ("low", "medium", "high"):
+                        reasoning_dict["effort"] = reasoning_effort
                     else:
                         reasoning_dict["effort"] = "medium"
                     request_params["reasoning"] = reasoning_dict
                     request_params["include"] = ["reasoning.encrypted_content"]
                 else:
                     request_params["temperature"] = temperature
+                if model.startswith("gpt-5"):
+                    # The Responses API expects verbosity under the nested `text` config
+                    request_params["text"] = {"verbosity": verbosity}
                 if tools:
                     request_params["tools"] = tools
                     request_params["tool_choice"] = "auto"
@@ -746,7 +722,9 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
 
         oai_key = gr.Textbox(label="OpenAI API Key", elem_id="oai_key", value=os.environ.get("OPENAI_API_KEY"))
         model = gr.Dropdown(label="Model", value="gpt-5-mini", allow_custom_value=True, elem_id="model",
-                            choices=["gpt-5", "gpt-5-mini", "gpt-5-chat-latest", "gpt-4o", "gpt-4.1", "gpt-4.5-preview", "o3", "o3-high", "o3-low", "o1-pro", "o1-high", "o1-mini", "o1", "o3-mini-high", "o3-mini", "o4-mini", "o4-mini-high", "chatgpt-4o-latest", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "whisper", "gpt-image-1", "gpt-5-new"])
+                            choices=["gpt-5", "gpt-5-mini", "gpt-5-chat-latest", "gpt-4o", "gpt-4.1", "o3", "o3-mini", "o4-mini", "chatgpt-4o-latest", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "whisper", "gpt-image-1"])
+        reasoning_effort = gr.Dropdown(label="Reasoning Effort", value="medium", choices=["low", "medium", "high"], elem_id="reasoning_effort")
+        verbosity = gr.Dropdown(label="Verbosity (GPT-5)", value="medium", choices=["low", "medium", "high"], elem_id="verbosity")
         system_prompt = gr.TextArea("You are a helpful yet diligent AI assistant. Answer faithfully and factually correct. Respond with 'I do not know' if uncertain.", label="System/Developer Prompt", lines=3, max_lines=250, elem_id="system_prompt")  
         temp = gr.Slider(0, 2, label="Temperature", elem_id="temp", value=1)
         max_tokens = gr.Slider(0, 16384, label="Max. Tokens", elem_id="max_tokens", value=0)
@@ -770,6 +748,34 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
                     item.value = localStorage.getItem(elem.split(" ")[0].slice(1)) || '';
                     item.dispatchEvent(event);
                 });
+                const re = document.querySelector('#reasoning_effort');
+                if (re) { const ev = new InputEvent('input', { bubbles: true }); re.value = localStorage.getItem('reasoning_effort') || 'medium'; re.dispatchEvent(ev); }
+                const vb = document.querySelector('#verbosity');
+                if (vb) { const ev2 = new InputEvent('input', { bubbles: true }); vb.value = localStorage.getItem('verbosity') || 'medium'; vb.dispatchEvent(ev2); }
+                // Backwards compatibility: map pseudo model names to base + reasoning effort
+                (function() {
+                    const modelEl = document.querySelector('#model');
+                    const effortEl = document.querySelector('#reasoning_effort');
+                    if (!modelEl || !effortEl) return;
+                    const m = modelEl.value;
+                    const mapping = {
+                        'o1-high': {base: 'o1', effort: 'high'},
+                        'o3-mini-high': {base: 'o3-mini', effort: 'high'},
+                        'o4-mini-high': {base: 'o4-mini', effort: 'high'},
+                        'o3-high': {base: 'o3', effort: 'high'},
+                        'o3-low': {base: 'o3', effort: 'low'}
+                    };
+                    if (mapping[m]) {
+                        const evM = new InputEvent('input', { bubbles: true });
+                        modelEl.value = mapping[m].base;
+                        modelEl.dispatchEvent(evM);
+                        const evE = new InputEvent('input', { bubbles: true });
+                        effortEl.value = mapping[m].effort;
+                        effortEl.dispatchEvent(evE);
+                        try { localStorage.setItem('model', mapping[m].base); } catch (e) {}
+                        try { localStorage.setItem('reasoning_effort', mapping[m].effort); } catch (e) {}
+                    }
+                })();
             }  
         """)
 
@@ -780,6 +786,10 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
                 localStorage.setItem('temp', document.querySelector('#temp input').value);  
                 localStorage.setItem('max_tokens', document.querySelector('#max_tokens input').value);  
                 localStorage.setItem('model', model);  
+                const re = document.querySelector('#reasoning_effort');
+                if (re) localStorage.setItem('reasoning_effort', re.value || 'medium');
+                const vb = document.querySelector('#verbosity');
+                if (vb) localStorage.setItem('verbosity', vb.value || 'medium');
             }  
         """) 
 
@@ -787,8 +797,10 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
                        ('system_prompt', '#system_prompt textarea'),
                        ('temp', '#temp input'),
                        ('max_tokens', '#max_tokens input'),
-                       ('model', '#model')]
-        controls = [oai_key, system_prompt, temp, max_tokens, model, python_use, web_search] + mcp_boxes
+                       ('model', '#model'),
+                       ('reasoning_effort', '#reasoning_effort'),
+                       ('verbosity', '#verbosity')]
+        controls = [oai_key, system_prompt, temp, max_tokens, model, reasoning_effort, verbosity, python_use, web_search] + mcp_boxes
 
         dl_settings_button.click(None, controls, js=generate_download_settings_js("oai_chat_settings.bin", control_ids))
         ul_settings_button.click(None, None, None, js=generate_upload_settings_js(control_ids))

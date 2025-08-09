@@ -73,8 +73,28 @@ def generate_upload_settings_js(control_ids):
                 const textDecoder = new TextDecoder();
                 const settingsStr = textDecoder.decode(decryptedData);
                 const settings = JSON.parse(settingsStr);
-                """ + "\n".join([f'document.querySelector("{ctrl[1]}").value = settings["{ctrl[0]}"];' for ctrl in control_ids]) + """
-                """ + "\n".join([f'document.querySelector("{ctrl[1]}").dispatchEvent(new InputEvent("input", {{ bubbles: true }}));' for ctrl in control_ids]) + """
+                // Backwards compatibility: translate pseudo model names into base model + reasoning effort
+                if (settings && typeof settings === 'object' && settings.model) {
+                    const m = settings.model;
+                    const mapping = {
+                        'o1-high': {base: 'o1', effort: 'high'},
+                        'o3-mini-high': {base: 'o3-mini', effort: 'high'},
+                        'o4-mini-high': {base: 'o4-mini', effort: 'high'},
+                        'o3-high': {base: 'o3', effort: 'high'},
+                        'o3-low': {base: 'o3', effort: 'low'}
+                    };
+                    if (mapping[m]) {
+                        settings.model = mapping[m].base;
+                        if (!settings.hasOwnProperty('reasoning_effort')) settings.reasoning_effort = mapping[m].effort;
+                    }
+                }
+                """
+    # For backwards compatibility, only set controls that exist in the settings file
+    js_code += "\n".join([
+        "if (Object.prototype.hasOwnProperty.call(settings, \"%s\")) {\n                const el = document.querySelector(\"%s\");\n                if (el) { el.value = settings[\"%s\"]; el.dispatchEvent(new InputEvent(\"input\", { bubbles: true })); }\n            }" % (ctrl[0], ctrl[1], ctrl[0])
+        for ctrl in control_ids
+    ])
+    js_code += """
             } catch (err) {
                 alert("Failed to decrypt. Check your password and try again.");
                 console.error("Decryption failed:", err);
