@@ -2,7 +2,7 @@ import gradio as gr
 import base64
 import os
 from pathlib import Path
-from openai import OpenAI
+import openai
 import json
 from PIL import Image
 import io
@@ -211,7 +211,7 @@ def process_values_js():
 
 async def bot(message, history, history_openai_format, oai_key, system_prompt, temperature, max_tokens, model, reasoning_effort, verbosity, python_use, web_search, *mcp_selected):
     try:
-        client = OpenAI(
+        client = openai.OpenAI(
             api_key=oai_key
         )
 
@@ -278,7 +278,7 @@ async def bot(message, history, history_openai_format, oai_key, system_prompt, t
             approval_items = []
             if history_openai_format:
                 last_msg = history_openai_format[-1]
-                if last_msg.type == "mcp_approval_request":
+                if isinstance(last_msg, openai.types.responses.ResponseOutputMessage) and last_msg.type == "mcp_approval_request":
                     flag = message[0].lower()
                     if flag == 'y':
                         approve = True
