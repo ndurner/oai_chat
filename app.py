@@ -13,6 +13,7 @@ from mcp_registry import load_registry, get_tools_for_server, call_local_mcp_too
 from gradio.components.base import Component
 from types import SimpleNamespace
 from dotenv import load_dotenv
+from transcription import stream_transcriptions
 
 from doc2json import process_docx
 from code_exec import eval_script
@@ -215,36 +216,16 @@ async def bot(message, history, history_openai_format, oai_key, system_prompt, t
             api_key=oai_key
         )
 
-        if model == "whisper":
-            result = ""
-            whisper_prompt = system_prompt
-            for msg in history:
-                role = msg.role if hasattr(msg, "role") else msg["role"]
-                content = msg.content if hasattr(msg, "content") else msg["content"]
-                if role == "user":
-                    if type(content) is tuple:
-                        pass
-                    else:
-                        whisper_prompt += f"\n{content}"
-                if role == "assistant":
-                        whisper_prompt += f"\n{content}"
-
-            if message["text"]:
-                whisper_prompt += message["text"]
-            if message.files:
-                for file in message.files:
-                    audio_fn = os.path.basename(file.path)
-                    with open(file.path, "rb") as f:
-                        transcription = client.audio.transcriptions.create(
-                            model="whisper-1", 
-                            prompt=whisper_prompt,
-                            file=f,
-                            response_format="text"
-                            )
-                    whisper_prompt += f"\n{transcription}"
-                    result += f"\n``` transcript {audio_fn}\n {transcription}\n```"
-            
-            yield gr.ChatMessage(role="assistant", content=result)
+        if model in ("whisper", "gpt-4o-transcribe-diarize"):
+            assistant_msg = gr.ChatMessage(role="assistant", content="")
+            streamed = False
+            for content in stream_transcriptions(client, model, message, history, system_prompt):
+                streamed = True
+                assistant_msg.content = content
+                yield assistant_msg, history_openai_format
+            if not streamed:
+                yield assistant_msg, history_openai_format
+            return
 
         elif model == "gpt-image-1":
             if message.get("files"):
@@ -722,7 +703,7 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
 
         oai_key = gr.Textbox(label="OpenAI API Key", elem_id="oai_key", value=os.environ.get("OPENAI_API_KEY"))
         model = gr.Dropdown(label="Model", value="gpt-5-mini", allow_custom_value=True, elem_id="model",
-                            choices=["gpt-5", "gpt-5-mini", "gpt-5-chat-latest", "gpt-5-pro", "gpt-4o", "gpt-4.1", "o3", "o3-pro", "o4-mini", "chatgpt-4o-latest", "gpt-4o-mini", "gpt-4-turbo", "whisper", "gpt-image-1"])
+                            choices=["gpt-5", "gpt-5-mini", "gpt-5-chat-latest", "gpt-5-pro", "gpt-4o", "gpt-4.1", "o3", "o3-pro", "o4-mini", "chatgpt-4o-latest", "gpt-4o-mini", "gpt-4-turbo", "whisper", "gpt-4o-transcribe-diarize", "gpt-image-1"])
         reasoning_effort = gr.Dropdown(label="Reasoning Effort", value="medium", choices=["low", "medium", "high"], elem_id="reasoning_effort")
         verbosity = gr.Dropdown(label="Verbosity (GPT-5)", value="medium", choices=["low", "medium", "high"], elem_id="verbosity")
         system_prompt = gr.TextArea("You are a helpful yet diligent AI assistant. Answer faithfully and factually correct. Respond with 'I do not know' if uncertain.", label="System/Developer Prompt", lines=3, max_lines=250, elem_id="system_prompt")  
