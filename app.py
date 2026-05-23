@@ -199,7 +199,7 @@ def _event_to_dict(obj):
         return {k: v for k, v in obj.__dict__.items() if not k.startswith("_")}
     return {"type": getattr(obj, "type", "unknown")}
 
-def save_settings(acc, sec, prompt, temp, tokens, model):  
+def save_settings(*args):
     # Dummy Python function, actual saving is done in JS  
     pass  
 
@@ -793,16 +793,15 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
         additional_inputs=[history_openai_format] + controls,
         additional_outputs=[history_openai_format],
         autofocus=False,
-        type="messages",
-        chatbot=gr.Chatbot(elem_id="chatbot", type="messages"),
-        textbox=gr.MultimodalTextbox(elem_id="chat_input"),
+        chatbot=gr.Chatbot(elem_id="chatbot", buttons=["copy"], height=450),
+        textbox=gr.MultimodalTextbox(
+            elem_id="chat_input",
+            file_count="multiple",
+            max_plain_text_length=2**31,
+            max_lines=10,
+        ),
     )
-    chat.textbox.file_count = "multiple"
-    chat.textbox.max_plain_text_length = 2**31
-    chat.textbox.max_lines = 10
     chatbot = chat.chatbot
-    chatbot.show_copy_button = True
-    chatbot.height = 450
 
     # Add event handlers to sync chatbot actions with history_openai_format state
     chatbot.clear(
@@ -832,9 +831,9 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
     with gr.Accordion("Import/Export", open = False):
         import_button = gr.UploadButton("History Import")
         export_button = gr.Button("History Export")
-        export_button.click(lambda: None, [chatbot, system_prompt], js=get_export_js())
+        export_button.click(lambda *args: None, [chatbot, system_prompt], js=get_export_js())
         dl_button = gr.Button("File download")
-        dl_button.click(lambda: None, [chatbot], js="""
+        dl_button.click(lambda *args: None, [chatbot], js="""
             (chat_history) => {
                 const languageToExt = {
                     'python': 'py',

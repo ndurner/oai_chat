@@ -32,6 +32,7 @@ def import_history(history, file):
             if msg['role'] == 'user':
                 content = msg['content']
                 if isinstance(content, list):
+                    text_parts = []
                     for item in content:
                         if item.get('type', '') == 'image_url':
                             data_uri = item['image_url']['url']
@@ -68,13 +69,24 @@ def import_history(history, file):
                                     "content": file_data
                                 }]
                             })
+                        elif item.get('type', '') in ('text', 'input_text'):
+                            text = item.get('text', item.get('content', ''))
+                            if text:
+                                text_parts.append(text)
                         else:
-                            # untested - does not happen?
-                            chat_history.append(item["content"])
-                            openai_history.append({
-                                "role": "user",
-                                "content": item["content"]
-                            })
+                            text = item.get("content", item.get("text", ""))
+                            if text:
+                                text_parts.append(text)
+                    if text_parts:
+                        text = "\n".join(text_parts)
+                        chat_history.append({
+                            "role": "user",
+                            "content": text
+                        })
+                        openai_history.append({
+                            "role": "user",
+                            "content": text
+                        })
                 else:
                     chat_history.append(msg)
                     openai_history.append({
@@ -83,6 +95,8 @@ def import_history(history, file):
                     })
                     
             elif msg['role'] == 'assistant':
+                if msg.get('content') == '':
+                    continue
                 chat_history.append(msg)
                 openai_history.append(openai.types.responses.ResponseOutputMessage(
                     id=f"msg_{msg_num}",
@@ -209,48 +223,101 @@ def get_export_js():
             });
         }
 
-        for (let message of chat_history) {
-            if (!message.role || !message.content) continue;
+        function getFileUrl(file) {
+            return file?.url || file?.path || file?.name;
+        }
 
-            if (message.content && typeof message.content === 'object') {
-                if (message.content.file) {
-                    try {
-                        const file_data = await processFile(message.content.file.url);
-                        if (!file_data) continue;
+        async function exportFileContent(item) {
+            const file = item.file || item;
+            const file_url = getFileUrl(file);
+            if (!file_url) return null;
 
-                        if (file_data.type.startsWith('image/')) {
-                            messages.push({
-                                "role": message.role,
-                                "content": [{
-                                    "type": "image_url",
-                                    "image_url": {
-                                        "url": file_data.data
-                                    }
-                                }]
-                            });
-                        } else {
-                            const fileLink = document.querySelector(`a[data-testid="chatbot-file"][download][href*="${message.content.file.url.split('/').pop()}"]`);
-                            const fileName = fileLink ? fileLink.getAttribute('download') : (message.content.file.name || "download");
-                            
-                            messages.push({
-                                "role": message.role,
-                                "content": [{
-                                    "type": "file",
-                                    "file": {
-                                        "url": file_data.data,
-                                        "name": fileName,
-                                        "mime_type": file_data.type
-                                    }
-                                }]
-                            });
-                        }
-                    } catch (error) {}
+            const file_data = await processFile(file_url);
+            if (!file_data) return null;
+
+            if (file_data.type.startsWith('image/')) {
+                return {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": file_data.data
+                    }
+                };
+            }
+
+            const fileName = file.orig_name || file.name || file.path?.split('/').pop() || "download";
+            return {
+                "type": "file",
+                "file": {
+                    "url": file_data.data,
+                    "name": fileName,
+                    "mime_type": file_data.type
                 }
-            } else {
-                messages.push({
-                    "role": message.role,
-                    "content": message.content
-                });
+            };
+        }
+
+        async function exportContent(content) {
+            if (content === null || content === undefined) return null;
+
+            if (typeof content === 'string') {
+                return [content];
+            }
+
+            const items = Array.isArray(content) ? content : [content];
+            const exportedMessages = [];
+            let mediaItems = [];
+
+            function flushMediaItems() {
+                if (mediaItems.length > 0) {
+                    exportedMessages.push(mediaItems);
+                    mediaItems = [];
+                }
+            }
+
+            for (const item of items) {
+                if (item === null || item === undefined) continue;
+
+                if (typeof item === 'string') {
+                    flushMediaItems();
+                    exportedMessages.push(item);
+                } else if (item.type === 'text' || Object.prototype.hasOwnProperty.call(item, 'text')) {
+                    flushMediaItems();
+                    exportedMessages.push(item.text || "");
+                } else if (item.type === 'file' || item.file) {
+                    try {
+                        const fileItem = await exportFileContent(item);
+                        if (fileItem) mediaItems.push(fileItem);
+                    } catch (error) {}
+                } else if (item.type === 'component' && item.component === 'image') {
+                    const file = item.value;
+                    if (file?.url || file?.path) {
+                        try {
+                            const fileItem = await exportFileContent(file);
+                            if (fileItem) mediaItems.push(fileItem);
+                        } catch (error) {}
+                    }
+                } else if (item.component || item.value !== undefined) {
+                    flushMediaItems();
+                    exportedMessages.push(String(item.value ?? ""));
+                }
+            }
+
+            flushMediaItems();
+            return exportedMessages.length > 0 ? exportedMessages : null;
+        }
+
+        const history = Array.isArray(chat_history) ? chat_history : (chat_history?.root || []);
+        for (let message of history) {
+            if (!message.role || message.content === undefined || message.content === null) continue;
+
+            const content = await exportContent(message.content);
+            if (content !== null) {
+                for (const item of content) {
+                    if (item === "") continue;
+                    messages.push({
+                        "role": message.role,
+                        "content": item
+                    });
+                }
             }
         }
 
