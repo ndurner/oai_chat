@@ -227,7 +227,7 @@ async def bot(message, history, history_openai_format, oai_key, system_prompt, t
                 yield assistant_msg, history_openai_format
             return
 
-        elif model == "gpt-image-1":
+        elif model in ("gpt-image-1", "gpt-image-1.5"):
             if message.get("files"):
                 image_files = []
                 for file in message["files"]:
@@ -703,7 +703,7 @@ with gr.Blocks(delete_cache=(86400, 86400)) as demo:
 
         oai_key = gr.Textbox(label="OpenAI API Key", elem_id="oai_key", value=os.environ.get("OPENAI_API_KEY"))
         model = gr.Dropdown(label="Model", value="gpt-5-mini", allow_custom_value=True, elem_id="model",
-                            choices=["gpt-5", "gpt-5-mini", "gpt-5-chat-latest", "gpt-5-pro", "gpt-4o", "gpt-4.1", "o3", "o3-pro", "o4-mini", "chatgpt-4o-latest", "gpt-4o-mini", "gpt-4-turbo", "whisper", "gpt-4o-transcribe-diarize", "gpt-image-1"])
+                            choices=["gpt-5", "gpt-5-mini", "gpt-5-chat-latest", "gpt-5-pro", "gpt-4o", "gpt-4.1", "o3", "o3-pro", "o4-mini", "chatgpt-4o-latest", "gpt-4o-mini", "gpt-4-turbo", "whisper", "gpt-4o-transcribe-diarize", "gpt-image-1", "gpt-image-1.5"])
         reasoning_effort = gr.Dropdown(label="Reasoning Effort", value="medium", choices=["low", "medium", "high"], elem_id="reasoning_effort")
         verbosity = gr.Dropdown(label="Verbosity (GPT-5)", value="medium", choices=["low", "medium", "high"], elem_id="verbosity")
         system_prompt = gr.TextArea("You are a helpful yet diligent AI assistant. Answer faithfully and factually correct. Respond with 'I do not know' if uncertain.", label="System/Developer Prompt", lines=3, max_lines=250, elem_id="system_prompt")  
